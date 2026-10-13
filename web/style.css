@@ -307,3 +307,6 @@ input[type="url"]:focus { border-color: var(--a1); box-shadow: 0 0 0 4px rgba(12
 .recent b { font-size: 14px; }
 .recent small { color: var(--muted); font-size: 12px; }
 .revise .btn { white-space: nowrap; }
+
+.tips { margin: 0 0 4px; padding-left: 18px; color: var(--muted); font-size: 14px; display: grid; gap: 6px; }
+.tips b { color: var(--text); }

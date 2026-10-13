@@ -198,6 +198,11 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("POST /api/verify", s.verify)
+	mux.HandleFunc("POST /api/ping", func(w http.ResponseWriter, r *http.Request) {
+		// Speed probe: swallow up to 4 MB so the client can time the upload.
+		n, _ := io.Copy(io.Discard, io.LimitReader(r.Body, 4<<20))
+		writeJSON(w, 200, map[string]any{"ok": true, "bytes": n})
+	})
 	mux.HandleFunc("POST /api/uploads", s.createUpload)
 	mux.HandleFunc("PUT /api/uploads/{id}/chunk", s.uploadChunk)
 	mux.HandleFunc("POST /api/jobs", s.create)
@@ -208,7 +213,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/me", s.me)
 	mux.HandleFunc("PUT /api/me/prefs", s.setPrefs)
 	if s.cfg.UI != nil {
-		mux.Handle("GET /", http.FileServerFS(s.cfg.UI))
+		static := http.FileServerFS(s.cfg.UI)
+		mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// The UI ships inside the binary and changes with it; never let a
+			// browser keep an old script (it caused a "stuck at 0%" report).
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+			static.ServeHTTP(w, r)
+		}))
 	}
 	return s.cors(mux)
 }

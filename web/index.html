@@ -223,6 +223,16 @@
     <p class="fine">Without AI you still get a clean automatic edit; with it, Splice sees your footage, fixes upside-down clips, and follows your brief.</p>
   </dialog>
 
+  <dialog id="slowDialog" aria-labelledby="slowTitle">
+    <h2 id="slowTitle">This will take a while</h2>
+    <p class="sub" id="slowBody"></p>
+    <ul class="tips" id="slowTips"></ul>
+    <div class="dlg-actions">
+      <button class="btn" id="slowCancel" type="button">Pick different clips</button>
+      <button class="btn primary" id="slowGo" type="button">Upload anyway</button>
+    </div>
+  </dialog>
+
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <script src="config.js"></script>

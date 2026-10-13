@@ -309,6 +309,39 @@
     return sess.upload_id;
   }
 
+  // Time a real 1 MB upload to the editor so a slow path is reported up front.
+  async function probeSpeed() {
+    const blob = new Blob([new Uint8Array(1 << 20)]);
+    const t = performance.now();
+    const res = await fetch(API + "/api/ping", { method: "POST", body: blob, headers: { "X-Visitor": visitor } });
+    if (!res.ok) throw new Error("The editor didn't answer the connection check.");
+    await res.arrayBuffer();
+    return blob.size / Math.max(0.05, (performance.now() - t) / 1000); // bytes/sec
+  }
+
+  function askAboutSlowUpload(bytes, rate) {
+    const dlg = $("slowDialog");
+    const mins = bytes / rate / 60;
+    const eta = mins >= 90 ? (mins / 60).toFixed(1) + " hours" : Math.round(mins) + " minutes";
+    $("slowBody").textContent =
+      `Your connection to the editor runs at about ${fmtRate(rate)}. Uploading ${fmtMB(bytes)} would take roughly ${eta}.`;
+    const tips = [
+      "<b>You rarely need that much.</b> A 30-second video usually only needs a few minutes of footage: try fewer or shorter clips.",
+      "<b>Trim first.</b> Cut clips down in your phone's photo app before uploading.",
+    ];
+    if (!/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+      tips.push("<b>Testing from the same computer that runs the editor?</b> Open <code>http://localhost:7860</code> instead of this link. Going through the internet is what's slow.");
+    }
+    $("slowTips").innerHTML = tips.map((t) => `<li>${t}</li>`).join("");
+    return new Promise((resolve) => {
+      const done = (v) => { dlg.close(); resolve(v); };
+      $("slowGo").onclick = () => done(true);
+      $("slowCancel").onclick = () => done(false);
+      dlg.addEventListener("cancel", () => resolve(false), { once: true });
+      dlg.showModal();
+    });
+  }
+
   async function start() {
     state.busy = true; updateGo();
     const items = state.clips.map((file, index) => ({ file, kind: "clip", index }));
@@ -319,6 +352,25 @@
 
     saveMemory();
     show("viewWork");
+    $("workTitle").textContent = "Checking your connection";
+    $("workSub").textContent = "A quick speed test before sending anything…";
+    setStep("upload"); setProgress(0);
+    const totalBytes = items.reduce((a, it) => a + it.file.size, 0);
+    if (totalBytes > 100 * 1048576) {
+      try {
+        const rate = await probeSpeed();
+        if (totalBytes / rate > 10 * 60 && !(await askAboutSlowUpload(totalBytes, rate))) {
+          show("viewSetup");
+          state.busy = false; updateGo();
+          return;
+        }
+      } catch (e) {
+        toast(e.message, "err");
+        show("viewSetup");
+        state.busy = false; updateGo();
+        return;
+      }
+    }
     $("workTitle").textContent = "Uploading your footage";
     $("workSub").textContent = `Sending ${fmtMB(items.reduce((a, it) => a + it.file.size, 0))}…`;
     $("upSpeed").textContent = "";
