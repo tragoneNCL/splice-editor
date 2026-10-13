@@ -35,6 +35,11 @@
         <p class="sub">Splice fixes orientation, finds the best moments, picks a strong opening, cuts to your brief, and exports it ready to post. No timeline required.</p>
       </div>
 
+      <div class="recent" id="recent" hidden>
+        <h3>Pick up where you left off</h3>
+        <ul id="recentList"></ul>
+      </div>
+
       <div class="grid">
         <div class="col">
           <div class="card" id="cardClips">
@@ -167,6 +172,7 @@
             <form id="reviseForm" class="revise">
               <input id="reviseInput" type="text" maxlength="500" placeholder="e.g. Make the second shot slow motion" autocomplete="off">
               <button class="btn primary" type="submit" id="reviseGo">Apply</button>
+              <button class="btn" type="button" id="undoBtn" disabled title="Go back one change">Undo</button>
             </form>
             <div class="chips" id="reviseIdeas">
               <button type="button">Make it shorter and punchier</button>

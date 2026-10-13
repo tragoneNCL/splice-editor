@@ -32,6 +32,7 @@ import (
 	"filmeditor/internal/project"
 	"filmeditor/internal/revise"
 	"filmeditor/internal/schema"
+	"filmeditor/internal/store"
 )
 
 type Config struct {
@@ -46,6 +47,8 @@ type Config struct {
 	RatePerHour    int           // new jobs per IP per hour
 	JobTimeout     time.Duration
 	MinFreeBytes   int64 // keep at least this much disk free
+	// DBPath is the SQLite file; "-" disables persistence. Default: DataDir/splice.db.
+	DBPath string
 
 	// AI is optional. Without it the rule-based planner is used and
 	// plain-language revisions are unavailable.
@@ -96,11 +99,14 @@ type Server struct {
 	cfg   Config
 	queue chan func()
 
+	store   *store.Store
 	mu      sync.Mutex
 	jobs    map[string]*job
 	hits    map[string][]time.Time
 	uploads map[string]*uploadSession
 }
+
+type edlT = schema.EDL
 
 type job struct {
 	mu       sync.Mutex
@@ -116,7 +122,12 @@ type job struct {
 	recipe   schema.Recipe
 	clips    []string
 	rev      int // bumps on each re-render so clients can bust caches
+	parent   int // revision this one was derived from (0 = original); drives undo
 	notes    []string
+	visitor  string
+	title    string
+	preset   string
+	prompt   string
 }
 
 // JobView is the JSON a client sees.
@@ -129,6 +140,7 @@ type JobView struct {
 	Planner  string      `json:"planner,omitempty"`
 	Revision int         `json:"revision"`
 	Notes    []string    `json:"notes,omitempty"`
+	CanUndo  bool        `json:"can_undo"`
 	EDL      *schema.EDL `json:"edl,omitempty"`
 }
 
@@ -136,7 +148,7 @@ func (j *job) view() JobView {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return JobView{ID: j.id, Status: j.status, Stage: j.stage, Progress: j.progress,
-		Error: j.errMsg, Planner: j.planner, Revision: j.rev, Notes: j.notes, EDL: j.edl}
+		Error: j.errMsg, Planner: j.planner, Revision: j.rev, Notes: j.notes, CanUndo: j.parent > 0, EDL: j.edl}
 }
 
 func (j *job) set(fn func(j *job)) {
@@ -153,6 +165,19 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	s := &Server{cfg: cfg, queue: make(chan func(), cfg.QueueSize),
 		jobs: map[string]*job{}, hits: map[string][]time.Time{}, uploads: map[string]*uploadSession{}}
+	if cfg.DBPath != "-" {
+		path := cfg.DBPath
+		if path == "" {
+			path = filepath.Join(cfg.DataDir, "splice.db")
+		}
+		st, err := store.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		s.store = st
+		s.recoverJobs()
+		go func() { <-ctx.Done(); st.Close() }()
+	}
 	for i := 0; i < cfg.Workers; i++ {
 		go func() {
 			for {
@@ -179,6 +204,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/jobs/{id}", s.status)
 	mux.HandleFunc("GET /api/jobs/{id}/video", s.video)
 	mux.HandleFunc("POST /api/jobs/{id}/revise", s.reviseJob)
+	mux.HandleFunc("POST /api/jobs/{id}/undo", s.undo)
+	mux.HandleFunc("GET /api/me", s.me)
+	mux.HandleFunc("PUT /api/me/prefs", s.setPrefs)
 	if s.cfg.UI != nil {
 		mux.Handle("GET /", http.FileServerFS(s.cfg.UI))
 	}
@@ -190,7 +218,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("Access-Control-Allow-Origin", s.cfg.AllowedOrigin)
 		h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-		h.Set("Access-Control-Allow-Headers", "Content-Type, X-AI-Provider, X-AI-Key, X-Kind, X-Index, X-Name, X-Offset, X-Total")
+		h.Set("Access-Control-Allow-Headers", "Content-Type, X-AI-Provider, X-AI-Key, X-Visitor, X-Kind, X-Index, X-Name, X-Offset, X-Total")
 		h.Set("Vary", "Origin")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -351,18 +379,20 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.launch(w, id, dir, p, ai, aiLabel)
+	s.launch(w, r, id, dir, p, ai, aiLabel)
 }
 
 // launch registers the job and queues it.
-func (s *Server) launch(w http.ResponseWriter, id, dir string, p params, ai llm.Asker, aiLabel string) {
+func (s *Server) launch(w http.ResponseWriter, r *http.Request, id, dir string, p params, ai llm.Asker, aiLabel string) {
 	canvas := schema.Presets[p.preset]
 	rec := schema.DefaultRecipe()
 	rec.Canvas, rec.TargetDuration = canvas, p.duration
-	j := &job{id: id, dir: dir, created: time.Now(), status: "queued", stage: "Queued", recipe: rec, clips: p.clips}
+	j := &job{id: id, dir: dir, created: time.Now(), status: "queued", stage: "Queued", recipe: rec, clips: p.clips,
+		visitor: visitorOf(r), title: p.title, preset: p.preset, prompt: p.prompt}
 	s.mu.Lock()
 	s.jobs[id] = j
 	s.mu.Unlock()
+	s.persist(j)
 
 	select {
 	case s.queue <- func() { s.runJob(j, p, ai, aiLabel) }:
@@ -535,12 +565,15 @@ func (s *Server) runJob(j *job, p params, ai llm.Asker, aiLabel string) {
 	}
 	j.set(func(j *job) {
 		j.status, j.stage, j.progress = "done", "Done", 1
-		j.planner, j.edl, j.rev, j.notes = res.Planner, &res.EDL, 1, res.Notes
+		j.planner, j.edl, j.rev, j.parent, j.notes = res.Planner, &res.EDL, 1, 0, res.Notes
 	})
+	s.saveRevision(j, "")
+	s.persist(j)
 }
 
 func (s *Server) failJob(j *job, msg string) {
 	j.set(func(j *job) { j.status, j.stage, j.errMsg = "error", "Failed", msg })
+	s.persist(j)
 }
 
 func (s *Server) lookup(w http.ResponseWriter, r *http.Request) *job {
@@ -655,8 +688,11 @@ func (s *Server) reviseJob(w http.ResponseWriter, r *http.Request) {
 		}
 		j.set(func(j *job) {
 			j.status, j.stage, j.progress, j.errMsg = "done", "Done", 1, ""
+			j.parent = j.rev
 			j.edl, j.rev = &next, j.rev+1
 		})
+		s.saveRevision(j, body.Instruction)
+		s.persist(j)
 	}
 	select {
 	case s.queue <- task:
@@ -686,6 +722,9 @@ func (s *Server) drop(id string) {
 	s.mu.Unlock()
 	if j != nil {
 		os.RemoveAll(j.dir)
+		if s.store != nil {
+			_ = s.store.DeleteJob(id)
+		}
 	}
 }
 

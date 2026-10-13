@@ -489,3 +489,190 @@ func TestUploadedReferenceIsDeletedAfterTheJob(t *testing.T) {
 		t.Error("reference video should be deleted after the job")
 	}
 }
+
+const visitorA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const visitorB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+func getJSON[T any](t *testing.T, url string, headers map[string]string) T {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decode[T](t, resp)
+}
+
+func waitRev(t *testing.T, url, id string, rev int) JobView {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		v := getJSON[JobView](t, url+"/api/jobs/"+id, nil)
+		if v.Status == "done" && v.Error != "" {
+			t.Fatalf("job error: %s", v.Error)
+		}
+		if v.Status == "done" && v.Revision == rev {
+			return v
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	t.Fatalf("revision %d never arrived", rev)
+	return JobView{}
+}
+
+func TestUndoStepsBackAndPersists(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	resp := upload(t, ts.URL, map[string]string{"duration": "5"},
+		[]file{{"clips", "a.mp4", clipBytes(t, synth.RedCircle, 3)}})
+	id := decode[map[string]string](t, resp)["id"]
+	v := waitDone(t, ts.URL, id)
+	if v.CanUndo {
+		t.Error("a fresh edit has nothing to undo")
+	}
+
+	post := func(path, body string) int {
+		r, err := http.Post(ts.URL+"/api/jobs/"+id+path, "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Body.Close()
+		return r.StatusCode
+	}
+	if c := post("/undo", ""); c != http.StatusBadRequest {
+		t.Errorf("undo with nothing to undo: %d", c)
+	}
+	if c := post("/revise", `{"instruction":"mute the first shot"}`); c != http.StatusAccepted {
+		t.Fatalf("revise: %d", c)
+	}
+	v = waitRev(t, ts.URL, id, 2)
+	if v.EDL.Cuts[0].Volume == nil || !v.CanUndo {
+		t.Fatalf("after revise: %+v", v)
+	}
+	if c := post("/undo", ""); c != http.StatusAccepted {
+		t.Fatalf("undo: %d", c)
+	}
+	v = waitRev(t, ts.URL, id, 3)
+	if v.EDL.Cuts[0].Volume != nil {
+		t.Errorf("undo should restore the unmuted cut: %+v", v.EDL.Cuts[0])
+	}
+	if v.CanUndo {
+		t.Error("back at the original, nothing further to undo")
+	}
+}
+
+func TestJobsSurviveServerRestart(t *testing.T) {
+	dir := t.TempDir()
+	mk := func() (*httptest.Server, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(context.Background())
+		s, err := New(ctx, Config{DataDir: dir, RatePerHour: 100})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return httptest.NewServer(s.Handler()), cancel
+	}
+	ts1, stop1 := mk()
+	resp := upload(t, ts1.URL, map[string]string{"duration": "5", "title": "Keep me"},
+		[]file{{"clips", "a.mp4", clipBytes(t, synth.RedCircle, 3)}})
+	id := decode[map[string]string](t, resp)["id"]
+	before := waitDone(t, ts1.URL, id)
+	ts1.Close()
+	stop1()
+	time.Sleep(200 * time.Millisecond)
+
+	ts2, stop2 := mk()
+	defer func() { ts2.Close(); stop2() }()
+	after := getJSON[JobView](t, ts2.URL+"/api/jobs/"+id, nil)
+	if after.Status != "done" || len(after.EDL.Cuts) != len(before.EDL.Cuts) || after.Revision != 1 {
+		t.Fatalf("after restart: %+v", after)
+	}
+	vid, err := http.Get(ts2.URL + "/api/jobs/" + id + "/video")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vid.Body.Close()
+	if vid.StatusCode != 200 {
+		t.Errorf("video after restart: %d", vid.StatusCode)
+	}
+}
+
+func TestVisitorPrefsAreIsolatedAndWhitelisted(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	put := func(visitor, body string) int {
+		req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/me/prefs", strings.NewReader(body))
+		if visitor != "" {
+			req.Header.Set("X-Visitor", visitor)
+		}
+		r, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Body.Close()
+		return r.StatusCode
+	}
+	if c := put("", `{}`); c != 400 {
+		t.Errorf("no visitor: %d", c)
+	}
+	if c := put("not-hex", `{}`); c != 400 {
+		t.Errorf("bad visitor: %d", c)
+	}
+	if c := put(visitorA, `{"preset":"1:1","duration":"45","apiKey":"sk-secret","evil":{"x":1}}`); c != 200 {
+		t.Fatalf("put: %d", c)
+	}
+	me := getJSON[map[string]any](t, ts.URL+"/api/me", map[string]string{"X-Visitor": visitorA})
+	prefs := me["prefs"].(map[string]any)
+	if prefs["preset"] != "1:1" || prefs["duration"] != "45" {
+		t.Errorf("prefs = %v", prefs)
+	}
+	if _, bad := prefs["apiKey"]; bad {
+		t.Error("unlisted keys must be dropped: prefs are never a place to keep secrets")
+	}
+	if _, bad := prefs["evil"]; bad {
+		t.Error("unlisted keys must be dropped")
+	}
+	other := getJSON[map[string]any](t, ts.URL+"/api/me", map[string]string{"X-Visitor": visitorB})
+	if len(other["prefs"].(map[string]any)) != 0 {
+		t.Errorf("prefs leaked to another visitor: %v", other["prefs"])
+	}
+}
+
+func TestRecentEditsAreListedPerVisitor(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	body, ct := multipartBody(t, map[string]string{"duration": "5", "title": "Mine"},
+		[]file{{"clips", "a.mp4", clipBytes(t, synth.RedCircle, 2)}})
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/jobs", body)
+	req.Header.Set("Content-Type", ct)
+	req.Header.Set("X-Visitor", visitorA)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := decode[map[string]string](t, resp)["id"]
+	waitDone(t, ts.URL, id)
+
+	mine := getJSON[struct{ Recent []recentJob }](t, ts.URL+"/api/me", map[string]string{"X-Visitor": visitorA})
+	if len(mine.Recent) != 1 || mine.Recent[0].ID != id || !mine.Recent[0].Playable || mine.Recent[0].Title != "Mine" {
+		t.Errorf("recent = %+v", mine.Recent)
+	}
+	theirs := getJSON[struct{ Recent []recentJob }](t, ts.URL+"/api/me", map[string]string{"X-Visitor": visitorB})
+	if len(theirs.Recent) != 0 {
+		t.Errorf("another visitor sees edits that aren't theirs: %+v", theirs.Recent)
+	}
+}
+
+func multipartBody(t *testing.T, fields map[string]string, files []file) (*bytes.Buffer, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for k, v := range fields {
+		mw.WriteField(k, v)
+	}
+	for _, f := range files {
+		fw, _ := mw.CreateFormFile(f.field, f.name)
+		fw.Write(f.data)
+	}
+	mw.Close()
+	return &buf, mw.FormDataContentType()
+}

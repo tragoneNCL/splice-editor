@@ -5,6 +5,7 @@ Hands-off video editing. Drop in clips and a sentence; get back a finished edit.
 - **Fixes orientation** — phone rotation metadata is applied deterministically, and a vision check catches clips stored upside-down with no metadata.
 - **Picks the moments** — scene detection + quality scoring, then an AI planner chooses a strong opening and cuts to your brief.
 - **Real editing features** — speed, volume, transitions, titles/captions, music with ducking, zoom/crop, color, fades, export presets.
+- **Remembers** — edits, their undo history and each visitor's settings persist in SQLite across restarts; **Undo** steps back one change.
 - **Edit by sentence** — "make the second shot slow motion" revises the same project file and re-renders.
 - **Match a reference video** — paste a YouTube link (needs `yt-dlp`) or upload one; only its pacing is measured.
 - **Bring your own AI key** — Claude or Gemini (free tier). Keys stay in the visitor's browser and are never stored server-side.
@@ -28,6 +29,10 @@ go run ./cmd/auto -clips ./testfootage -prompt "calm and simple" -out final.mp4
 go run ./cmd/revise -edl edit.json -do "slow-mo the second shot"
 FILMEDITOR_LIVE=1 go test ./internal/e2e -v      # live model checks (uses your claude login)
 ```
+
+## Run it for a friend (from your own machine)
+
+`scripts/live.sh` builds the server, starts a free Cloudflare quick tunnel, prints the public URL and points the GitHub Pages site at it. Put optional settings (e.g. a server-side `GEMINI_API_KEY`) in `~/.splice.env`, which is never committed. The link works only while the machine is awake and the script is running.
 
 ## Deploy
 

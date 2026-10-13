@@ -292,5 +292,5 @@ func (s *Server) createFromUpload(w http.ResponseWriter, r *http.Request) {
 	for _, c := range clips {
 		p.clips = append(p.clips, filepath.Join(dir, c.name))
 	}
-	s.launch(w, id, dir, p, ai, aiLabel)
+	s.launch(w, r, id, dir, p, ai, aiLabel)
 }

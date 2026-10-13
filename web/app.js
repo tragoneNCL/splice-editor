@@ -9,6 +9,18 @@
     del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
   };
 
+  // Anonymous, random, browser-local id: only unlocks this browser's saved
+  // settings and its own recent edits. Not a login and not a secret.
+  const visitor = (() => {
+    let v = store.get("splice.visitor");
+    if (!v || !/^[0-9a-f]{32}$/.test(v)) {
+      const b = crypto.getRandomValues(new Uint8Array(16));
+      v = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+      store.set("splice.visitor", v);
+    }
+    return v;
+  })();
+
   const state = {
     clips: [],            // File[]
     music: null,          // File | null
@@ -41,6 +53,7 @@
   }
 
   async function api(path, opts = {}) {
+    opts = { ...opts, headers: { "X-Visitor": visitor, ...(opts.headers || {}) } };
     const res = await fetch(API + path, opts);
     let body = null;
     try { body = await res.json(); } catch { /* not json */ }
@@ -248,6 +261,7 @@
         const { it, off } = task;
         const blob = it.file.slice(off, Math.min(it.file.size, off + chunk));
         const headers = {
+          "X-Visitor": visitor,
           "X-Kind": it.kind, "X-Index": String(it.index), "X-Name": it.file.name,
           "X-Offset": String(off), "X-Total": String(it.file.size),
         };
@@ -281,6 +295,7 @@
     if (useRef && state.ref) items.push({ file: state.ref, kind: "inspo", index: 0 });
     const refUrl = useRef && !state.ref ? $("refUrl").value.trim() : "";
 
+    saveMemory();
     show("viewWork");
     $("workTitle").textContent = "Uploading your footage";
     $("workSub").textContent = `Sending ${fmtMB(items.reduce((a, it) => a + it.file.size, 0))}…`;
@@ -387,6 +402,7 @@
     v = v || (await api(`/api/jobs/${id}`));
     state.job = { id, revision: v.revision };
     $("playerWrap").style.aspectRatio = state.preset.replace(":", " / ");
+    $("undoBtn").disabled = !v.can_undo;
     setVideo(id, v.revision);
     renderTimeline(v.edl);
     const fixes = v.edl && v.edl.fixes ? Object.keys(v.edl.fixes).length : 0;
@@ -403,6 +419,69 @@
     }
     show("viewResult");
     $("player").focus({ preventScroll: true });
+  }
+
+  // ── memory: saved preferences + recent edits ──
+  function saveMemory() {
+    const prefs = {
+      preset: state.preset, duration: $("duration").value, briefMode: state.briefMode,
+      prompt: $("prompt").value.trim().slice(0, 500), title: $("title").value.trim().slice(0, 80),
+    };
+    api("/api/me/prefs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(prefs) })
+      .catch(() => { /* memory is a nicety; never block an edit on it */ });
+  }
+
+  function applyPrefs(p) {
+    if (!p) return;
+    if (p.preset && schemaPresets.includes(p.preset)) {
+      state.preset = p.preset;
+      for (const b of $("presets").children) b.setAttribute("aria-checked", String(b.dataset.v === p.preset));
+    }
+    if (p.duration && +p.duration >= 10 && +p.duration <= 90) {
+      $("duration").value = p.duration;
+      $("durOut").textContent = p.duration + "s";
+    }
+    if (p.title && !$("title").value) $("title").value = p.title;
+    if (p.briefMode === "reference") $("briefMode").querySelector('[data-v="reference"]').click();
+  }
+  const schemaPresets = ["9:16", "1:1", "4:5", "16:9"];
+
+  function renderRecent(list) {
+    const ul = $("recentList");
+    ul.innerHTML = "";
+    const usable = (list || []).filter((r) => r.playable);
+    $("recent").hidden = usable.length === 0;
+    for (const r of usable.slice(0, 5)) {
+      const li = document.createElement("li");
+      const when = new Date(r.created).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      li.innerHTML = `<button type="button"><b>${esc(r.title || "Untitled edit")}</b><small>${esc(when)} · ${esc(r.preset || "")}</small></button>`;
+      li.querySelector("button").addEventListener("click", async () => {
+        try {
+          if (r.preset) state.preset = r.preset;
+          await showResult(r.id);
+        } catch (e) { toast("That edit is no longer available.", "err"); }
+      });
+      ul.appendChild(li);
+    }
+  }
+
+  async function undo() {
+    if (!state.job) return;
+    const btn = $("undoBtn");
+    btn.disabled = true;
+    $("playerBusy").hidden = false;
+    $("busyText").textContent = "Undoing…";
+    const want = state.job.revision + 1;
+    try {
+      await api(`/api/jobs/${state.job.id}/undo`, { method: "POST" });
+      const v = await poll(state.job.id, want, (t) => { if (t.stage) $("busyText").textContent = t.stage + "…"; });
+      await showResult(state.job.id, v);
+      toast("Undone.", "ok");
+    } catch (e) {
+      toast(e.message, "err");
+    } finally {
+      $("playerBusy").hidden = true;
+    }
   }
 
   async function revise(instruction) {
@@ -522,6 +601,7 @@
       $("player").removeAttribute("src");
       show("viewSetup");
     });
+    $("undoBtn").addEventListener("click", undo);
     $("reviseForm").addEventListener("submit", (e) => {
       e.preventDefault();
       const t = $("reviseInput").value.trim();
@@ -552,6 +632,7 @@
     renderAI();
     renderClips();
     restoreConnection();
+    api("/api/me").then((me) => { applyPrefs(me.prefs); renderRecent(me.recent); }).catch(() => {});
   }
 
   init();

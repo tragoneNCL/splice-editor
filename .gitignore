@@ -5,6 +5,9 @@
 /data/
 /testfootage/
 *.mp4
+*.db
+*.db-wal
+*.db-shm
 *.mov
 *.m4a
 *.mp3
