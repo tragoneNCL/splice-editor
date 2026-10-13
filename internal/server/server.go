@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -84,9 +85,6 @@ func (c *Config) defaults() {
 	}
 	if c.TTL == 0 {
 		c.TTL = time.Hour
-	}
-	if c.AllowedOrigin == "" {
-		c.AllowedOrigin = "*"
 	}
 	if c.RatePerHour == 0 {
 		c.RatePerHour = 6
@@ -238,6 +236,12 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
+		if s.cfg.AllowedOrigin == "" {
+			// Same-origin only (the safe default for a locally run app: other
+			// websites cannot drive it from the visitor's browser).
+			next.ServeHTTP(w, r)
+			return
+		}
 		h.Set("Access-Control-Allow-Origin", s.cfg.AllowedOrigin)
 		h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		h.Set("Access-Control-Allow-Headers", "Content-Type, X-AI-Provider, X-AI-Key, X-Visitor, X-Kind, X-Index, X-Name, X-Offset, X-Total")
@@ -270,7 +274,10 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		extra["same_network"] = true
 		extra["local_urls"] = localURLs(s.port)
 	}
+	_, ffErr := exec.LookPath("ffmpeg")
+	_, fpErr := exec.LookPath("ffprobe")
 	writeJSON(w, 200, map[string]any{"ok": true, "ai": ai, "server_ai": s.cfg.AI != nil, "max_clips": s.cfg.MaxClips,
+		"ffmpeg":        ffErr == nil && fpErr == nil,
 		"extra":         extra,
 		"max_upload_mb": s.cfg.MaxUploadBytes >> 20})
 }

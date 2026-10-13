@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -191,11 +190,10 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 
 // checkDisk refuses work that would leave the host with too little free space.
 func (s *Server) checkDisk(incoming int64) error {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(s.cfg.DataDir, &st); err != nil {
+	free, ok := freeBytes(s.cfg.DataDir)
+	if !ok {
 		return nil // can't tell; don't block
 	}
-	free := int64(st.Bavail) * int64(st.Bsize)
 	if free-incoming < s.cfg.MinFreeBytes {
 		return errors.New("the editor's disk is nearly full right now; try a smaller upload or try again later")
 	}

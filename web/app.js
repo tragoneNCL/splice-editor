@@ -709,6 +709,12 @@
         $("limitText").textContent = ` · up to ${h.max_upload_mb.toLocaleString()} MB per edit`;
       }
       if (h.server_ai && !state.key) { state.connected = true; state.provider = "claude"; }
+      if (h.ffmpeg === false) {
+        const b = $("banner");
+        b.hidden = false;
+        b.innerHTML = "<b>One thing missing:</b> the editor can't find <code>ffmpeg</code> on this computer, so videos can't be processed. " +
+          "Install it (Mac: <code>brew install ffmpeg</code>, Windows: <code>winget install Gyan.FFmpeg</code>) and restart the app.";
+      }
       const ex = h.extra || {};
       if (ex.same_network && Array.isArray(ex.local_urls) && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
         state.localUrls = ex.local_urls;

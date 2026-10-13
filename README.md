@@ -30,6 +30,23 @@ go run ./cmd/revise -edl edit.json -do "slow-mo the second shot"
 FILMEDITOR_LIVE=1 go test ./internal/e2e -v      # live model checks (uses your claude login)
 ```
 
+## Fastest: run it as a local app
+
+Everything runs on your own computer, so there is no upload at all: a 1.8 GB
+set of clips is edited in about 25 seconds. Download the app for your system
+from the Releases page (one file; the UI is inside it), install ffmpeg once
+(`brew install ffmpeg` on Mac, `winget install Gyan.FFmpeg` on Windows), then:
+
+```bash
+./splice -open        # opens http://localhost:7860 in your browser
+```
+
+Footage never leaves the machine. The app is same-origin only by default, so
+other websites cannot drive it from your browser.
+
+Uploading to a hosted copy is always limited by the uploader's own internet
+connection; a local app has no such limit.
+
 ## Run it for a friend (from your own machine)
 
 `scripts/live.sh` builds the server, starts a free Cloudflare quick tunnel, prints the public URL and points the GitHub Pages site at it. Put optional settings (e.g. a server-side `GEMINI_API_KEY`) in `~/.splice.env`, which is never committed. The link works only while the machine is awake and the script is running.

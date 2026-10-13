@@ -12,10 +12,14 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -35,8 +39,20 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	openBrowser := flag.Bool("open", false, "open the editor in your browser when it starts")
+	flag.Parse()
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		log.Printf("WARNING: ffmpeg was not found. Install it first:\n%s", ffmpegHelp())
+	}
+
+	dataDir := os.Getenv("DATA_DIR")
+	if dataDir == "" {
+		if c, err := os.UserCacheDir(); err == nil {
+			dataDir = filepath.Join(c, "splice")
+		}
+	}
 	cfg := server.Config{
-		DataDir:        os.Getenv("DATA_DIR"),
+		DataDir:        dataDir,
 		AllowedOrigin:  os.Getenv("ALLOWED_ORIGIN"),
 		MaxUploadBytes: int64(envInt("MAX_UPLOAD_MB", 100000)) << 20,
 		MaxClips:       envInt("MAX_CLIPS", 200),
@@ -64,8 +80,36 @@ func main() {
 		defer cancel()
 		srv.Shutdown(shutdown)
 	}()
-	log.Printf("listening on %s", addr)
+	url := "http://localhost:" + strconv.Itoa(envInt("PORT", 7860))
+	log.Printf("Splice is running: open %s", url)
+	if *openBrowser {
+		go func() { time.Sleep(500 * time.Millisecond); openURL(url) }()
+	}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+func ffmpegHelp() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "  brew install ffmpeg"
+	case "windows":
+		return "  winget install Gyan.FFmpeg   (then restart this program)"
+	default:
+		return "  sudo apt install ffmpeg      (or your distro's equivalent)"
+	}
+}
+
+func openURL(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	_ = cmd.Start()
 }
