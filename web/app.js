@@ -397,6 +397,19 @@
 
   async function start() {
     state.busy = true; updateGo();
+    try {
+      await startInner();
+    } catch (e) {
+      // Whatever goes wrong, never leave the user staring at 0%.
+      console.error(e);
+      toast((e && e.message) || "Something went wrong starting the edit.", "err");
+      show("viewSetup");
+    } finally {
+      state.busy = false; updateGo();
+    }
+  }
+
+  async function startInner() {
     const items = state.clips.map((file, index) => ({ file, kind: "clip", index }));
     if (state.music) items.push({ file: state.music, kind: "music", index: 0 });
     const useRef = state.briefMode === "reference";
@@ -414,13 +427,11 @@
         const rate = await probeSpeed();
         if (totalBytes / rate > 10 * 60 && !(await askAboutSlowUpload(totalBytes, rate))) {
           show("viewSetup");
-          state.busy = false; updateGo();
           return;
         }
       } catch (e) {
         toast(e.message, "err");
         show("viewSetup");
-        state.busy = false; updateGo();
         return;
       }
     }
@@ -450,8 +461,6 @@
     } catch (e) {
       toast(e.message, "err");
       show("viewSetup");
-    } finally {
-      state.busy = false; updateGo();
     }
   }
 
@@ -775,6 +784,12 @@
     restoreConnection();
     api("/api/me").then((me) => { applyPrefs(me.prefs); renderRecent(me.recent); }).catch(() => {});
   }
+
+  window.addEventListener("unhandledrejection", (e) => {
+    console.error(e.reason);
+    if (!$("viewWork").hidden && state.busy === false) return;
+    toast((e.reason && e.reason.message) || "Something went wrong.", "err");
+  });
 
   init();
 })();
