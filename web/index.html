@@ -19,43 +19,114 @@
       <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h7l-3 10H4zM13 7h7l-3 10h-7z" fill="currentColor"/></svg></span>
       <span>Splice</span>
     </a>
+    <nav class="nav" id="nav" hidden>
+      <a href="#/home" id="navHome">Projects</a>
+      <a href="#/library" id="navLib">Library</a>
+    </nav>
     <button class="ai-pill update-pill" id="updatePill" type="button" hidden>
       <span class="dot" aria-hidden="true"></span><span id="updateText">Update available</span>
     </button>
     <button class="ai-pill" id="aiPill" type="button" aria-haspopup="dialog">
       <span class="dot" id="aiDot"></span><span id="aiPillText">AI: optional</span>
     </button>
+    <button class="ai-pill acct" id="acctBtn" type="button" hidden>
+      <span id="acctName">Account</span>
+    </button>
   </header>
 
   <div class="banner" id="banner" role="status" hidden></div>
 
   <main>
-    <!-- ───────── SETUP ───────── -->
-    <section id="viewSetup" class="view">
-      <div class="hero">
-        <p class="eyebrow">Hands-off video editor</p>
-        <h1>Drop in your clips.<br><span class="grad">Get back a finished edit.</span></h1>
-        <p class="sub">Splice fixes orientation, finds the best moments, picks a strong opening, cuts to your brief, and exports it ready to post. No timeline required.</p>
+    <!-- ───────── SIGN IN ───────── -->
+    <section id="viewAuth" class="view" hidden>
+      <div class="auth card">
+        <h1 class="auth-h">Welcome to <span class="grad">Splice</span></h1>
+        <p class="sub">Your projects and footage are saved on this computer. Sign in to pick up where you left off.</p>
+        <div class="seg two tabs" id="authTabs" role="tablist" aria-label="Sign in or create an account">
+          <button type="button" role="tab" aria-selected="true" data-v="login"><b>Sign in</b></button>
+          <button type="button" role="tab" aria-selected="false" data-v="signup"><b>Create account</b></button>
+        </div>
+        <form id="authForm" novalidate>
+          <label class="field" id="nameField" hidden>
+            <span>Your name <em>optional</em></span>
+            <input id="authName" type="text" autocomplete="name" maxlength="80">
+          </label>
+          <label class="field">
+            <span>Email</span>
+            <input id="authEmail" type="text" inputmode="email" autocomplete="email" spellcheck="false" placeholder="you@example.com">
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input id="authPassword" type="password" autocomplete="current-password" placeholder="At least 8 characters">
+          </label>
+          <p class="err" id="authErr" role="alert" hidden></p>
+          <button class="go" id="authGo" type="submit"><span id="authGoText">Sign in</span></button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ───────── HOME: PROJECTS ───────── -->
+    <section id="viewHome" class="view" hidden>
+      <div class="page-h">
+        <div>
+          <h1 class="page-title">Projects</h1>
+          <p class="sub" id="homeSub">Everything you've made, saved on this computer.</p>
+        </div>
+        <button class="btn primary big" id="newProject" type="button">+ New project</button>
+      </div>
+      <div class="banner-slot" id="homeNotice"></div>
+      <ul class="cards" id="projectGrid"></ul>
+      <div class="empty" id="homeEmpty" hidden>
+        <div class="empty-ico" aria-hidden="true">🎬</div>
+        <h2>Make your first edit</h2>
+        <p class="sub">Create a project, drop in your clips, and Splice will cut them into a finished video.</p>
+        <button class="btn primary big" id="newProject2" type="button">+ New project</button>
+      </div>
+    </section>
+
+    <!-- ───────── LIBRARY ───────── -->
+    <section id="viewLibrary" class="view" hidden>
+      <div class="page-h">
+        <div>
+          <h1 class="page-title">Footage library</h1>
+          <p class="sub" id="libSub">Upload once, use in any project.</p>
+        </div>
+        <button class="btn primary big" id="libAdd" type="button">+ Add footage</button>
+      </div>
+      <ul class="cards media-cards" id="libGrid"></ul>
+      <div class="empty" id="libEmpty" hidden>
+        <div class="empty-ico" aria-hidden="true">📁</div>
+        <h2>No footage yet</h2>
+        <p class="sub">Add clips here and they'll be available in every project.</p>
+      </div>
+    </section>
+
+    <!-- ───────── PROJECT WORKSPACE ───────── -->
+    <section id="viewProject" class="view" hidden>
+      <div class="page-h tight">
+        <div class="crumbs">
+          <button class="link" id="backHome" type="button">← Projects</button>
+          <input id="projName" class="name-input" type="text" maxlength="80" aria-label="Project name">
+        </div>
+        <span class="chip" id="projStatus">Draft</span>
       </div>
 
-      <div class="recent" id="recent" hidden>
-        <h3>Pick up where you left off</h3>
-        <ul id="recentList"></ul>
-      </div>
-
-      <div class="grid">
+      <div class="work-grid">
         <div class="col">
-          <div class="card" id="cardClips">
-            <div class="card-h"><span class="num">1</span><h2>Your footage</h2><span class="meta" id="clipMeta"></span></div>
-            <div class="drop" id="drop" tabindex="0" role="button" aria-label="Add video clips">
+          <div class="card">
+            <div class="card-h"><span class="num">1</span><h2>Footage</h2><span class="meta" id="clipMeta"></span></div>
+            <div class="drop slim" id="drop" tabindex="0" role="button" aria-label="Add video clips">
               <input id="fileInput" type="file" accept="video/*,.mp4,.mov,.m4v,.mkv,.webm" multiple hidden>
-              <div class="drop-ico" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
-              </div>
-              <p class="drop-t">Drag &amp; drop videos here</p>
-              <p class="drop-s">or <u>browse</u> · MP4, MOV, WebM · phone footage is fine<span id="limitText"></span></p>
+              <p class="drop-t">Drop videos here <span class="drop-s">or <u>browse</u></span></p>
+              <p class="drop-s" id="limitText">MP4, MOV, WebM · phone footage is fine</p>
+            </div>
+            <div class="upload-card" id="uploadCard" hidden>
+              <div class="bar"><i id="upBar"></i></div>
+              <p class="up-line"><b id="upTitle">Uploading…</b> <span id="upSub"></span></p>
+              <p class="speed" id="upSpeed" aria-live="polite"></p>
             </div>
             <ul class="clips" id="clipList" aria-live="polite"></ul>
+            <button class="btn" id="pickLibrary" type="button">Add from library</button>
           </div>
 
           <div class="card">
@@ -64,7 +135,6 @@
               <button type="button" role="radio" aria-checked="true" data-v="describe"><b>Describe it</b><small>Write a sentence</small></button>
               <button type="button" role="radio" aria-checked="false" data-v="reference"><b>Match a video</b><small>YouTube link or file</small></button>
             </div>
-
             <div id="refBlock" hidden>
               <label class="field">
                 <span>YouTube link</span>
@@ -76,9 +146,8 @@
                 <span id="refText">Upload a reference video…</span>
                 <button type="button" id="refClear" class="x" aria-label="Remove reference" hidden>×</button>
               </label>
-              <p class="fine">Splice measures the reference's pacing and style, then edits <em>your</em> footage to feel like it. The reference itself is never used in your video and is deleted after it's measured.</p>
+              <p class="fine">Only the reference's pacing and style are measured; none of it appears in your video.</p>
             </div>
-
             <label class="field">
               <span id="promptLabel">What should this video feel like?</span>
               <textarea id="prompt" rows="3" maxlength="1000" placeholder="e.g. Fast-paced travel reel, open on the best view, keep it upbeat"></textarea>
@@ -90,9 +159,7 @@
               <button type="button">Highlights, best moments only</button>
             </div>
           </div>
-        </div>
 
-        <div class="col">
           <div class="card">
             <div class="card-h"><span class="num">3</span><h2>Format</h2></div>
             <div class="seg" id="presets" role="radiogroup" aria-label="Aspect ratio">
@@ -101,17 +168,14 @@
               <button type="button" role="radio" aria-checked="false" data-v="4:5"><i class="ar a45"></i><b>4:5</b><small>Portrait</small></button>
               <button type="button" role="radio" aria-checked="false" data-v="16:9"><i class="ar a169"></i><b>16:9</b><small>YouTube</small></button>
             </div>
-
             <div class="field">
               <span class="row"><span>Length</span><output id="durOut">30s</output></span>
               <input id="duration" type="range" min="10" max="90" step="5" value="30" aria-label="Target length in seconds">
             </div>
-
             <label class="field">
               <span>Title <em>optional</em></span>
               <input id="title" type="text" maxlength="80" placeholder="Shown at the start">
             </label>
-
             <div class="field">
               <span>Music <em>optional</em></span>
               <label class="file" id="musicLabel">
@@ -121,57 +185,35 @@
               </label>
             </div>
           </div>
-
-          <button class="go" id="go" type="button" disabled>
-            <span>Create my edit</span>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-          <p class="fine" id="goHint">Add at least one clip to begin.</p>
         </div>
-      </div>
-    </section>
 
-    <!-- ───────── WORKING ───────── -->
-    <section id="viewWork" class="view" hidden>
-      <div class="work card">
-        <div class="ring" aria-hidden="true">
-          <svg viewBox="0 0 120 120"><circle class="trk" cx="60" cy="60" r="52"/><circle class="bar" id="ringBar" cx="60" cy="60" r="52"/></svg>
-          <span id="ringPct">0%</span>
-        </div>
-        <h2 id="workTitle">Uploading your footage</h2>
-        <p class="sub" id="workSub">This usually takes a minute or two.</p>
-        <p class="speed" id="upSpeed" aria-live="polite"></p>
-        <ol class="steps" id="steps">
-          <li data-s="upload"><i></i>Upload</li>
-          <li data-s="orient"><i></i>Check orientation</li>
-          <li data-s="analyze"><i></i>Find the best moments</li>
-          <li data-s="plan"><i></i>Plan the edit</li>
-          <li data-s="render"><i></i>Render</li>
-        </ol>
-      </div>
-    </section>
-
-    <!-- ───────── RESULT ───────── -->
-    <section id="viewResult" class="view" hidden>
-      <div class="result">
-        <div class="player-col">
-          <div class="player" id="playerWrap">
-            <video id="player" controls playsinline preload="metadata"></video>
-            <div class="busy" id="playerBusy" hidden><span class="spin"></span><p id="busyText">Re-rendering…</p></div>
-          </div>
-        </div>
-        <div class="side-col">
-          <div class="card">
-            <div class="card-h"><h2>Your edit is ready</h2></div>
-            <p class="sub" id="resultMeta"></p>
+        <div class="col sticky">
+          <div class="card preview-card">
+            <div class="player empty-player" id="playerWrap">
+              <video id="player" controls playsinline preload="metadata" hidden></video>
+              <div class="placeholder" id="playerEmpty">
+                <div class="empty-ico" aria-hidden="true">🎞️</div>
+                <p>Your edit will appear here</p>
+              </div>
+              <div class="busy" id="playerBusy" hidden><span class="spin"></span><p id="busyText">Working…</p></div>
+            </div>
+            <div class="progress-block" id="progressBlock" hidden>
+              <div class="bar"><i id="genBar"></i></div>
+              <p class="up-line"><b id="workTitle">Working</b> <span id="workSub"></span></p>
+            </div>
+            <button class="go" id="go" type="button" disabled>
+              <span id="goText">Create my edit</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <p class="fine" id="goHint">Add at least one clip to begin.</p>
+            <p class="fine" id="resultMeta"></p>
             <ul class="notes" id="resultNotes"></ul>
-            <div class="actions">
+            <div class="actions" id="resultActions" hidden>
               <a class="btn primary" id="download" download="splice-edit.mp4">Download MP4</a>
-              <button class="btn" id="again" type="button">New edit</button>
             </div>
           </div>
 
-          <div class="card">
+          <div class="card" id="reviseCard" hidden>
             <div class="card-h"><h2>Change it with a sentence</h2></div>
             <form id="reviseForm" class="revise">
               <input id="reviseInput" type="text" maxlength="500" placeholder="e.g. Make the second shot slow motion" autocomplete="off">
@@ -187,7 +229,7 @@
             <p class="fine" id="reviseHint"></p>
           </div>
 
-          <div class="card">
+          <div class="card" id="timelineCard" hidden>
             <div class="card-h"><h2>Timeline</h2><span class="meta" id="tlMeta"></span></div>
             <div class="timeline" id="timeline" aria-label="Cuts in order"></div>
             <ul class="legend" id="legend"></ul>
@@ -198,7 +240,7 @@
   </main>
 
   <footer class="foot">
-    <p>Splice<span class="ver" id="footVersion"></span> · Your clips are processed, then deleted automatically within the hour. Your API key stays in this browser and is sent only with your own requests.</p>
+    <p>Splice<span class="ver" id="footVersion"></span> · Your footage and projects are saved on this computer. Your AI key stays in this browser and is only sent with your own requests.</p>
   </footer>
 
   <!-- ───────── AI CONNECT DIALOG ───────── -->
@@ -225,6 +267,41 @@
       <button class="btn ghost" id="aiSkip" type="button">Continue without AI</button>
     </div>
     <p class="fine">Without AI you still get a clean automatic edit; with it, Splice sees your footage, fixes upside-down clips, and follows your brief.</p>
+  </dialog>
+
+  <dialog id="acctDialog" aria-labelledby="acctTitle">
+    <form method="dialog" class="dlg-x"><button aria-label="Close">×</button></form>
+    <h2 id="acctTitle">Your account</h2>
+    <p class="sub" id="acctEmail"></p>
+    <details class="pw">
+      <summary>Change password</summary>
+      <label class="field"><span>Current password</span><input id="pwCurrent" type="password" autocomplete="current-password"></label>
+      <label class="field"><span>New password</span><input id="pwNext" type="password" autocomplete="new-password"></label>
+      <p class="err" id="pwErr" role="alert" hidden></p>
+      <button class="btn" id="pwGo" type="button">Update password</button>
+    </details>
+    <div class="dlg-actions">
+      <button class="btn" id="signOut" type="button">Sign out</button>
+    </div>
+  </dialog>
+
+  <dialog id="pickDialog" aria-labelledby="pickTitle">
+    <form method="dialog" class="dlg-x"><button aria-label="Close">×</button></form>
+    <h2 id="pickTitle">Add from your library</h2>
+    <ul class="pick-list" id="pickList"></ul>
+    <p class="fine" id="pickEmpty" hidden>Your library is empty. Drop clips into the project to add some.</p>
+    <div class="dlg-actions">
+      <button class="btn primary" id="pickDone" type="button">Add selected</button>
+    </div>
+  </dialog>
+
+  <dialog id="confirmDialog" aria-labelledby="confirmTitle">
+    <h2 id="confirmTitle">Are you sure?</h2>
+    <p class="sub" id="confirmBody"></p>
+    <div class="dlg-actions">
+      <button class="btn" id="confirmNo" type="button">Cancel</button>
+      <button class="btn primary" id="confirmYes" type="button">Confirm</button>
+    </div>
   </dialog>
 
   <dialog id="slowDialog" aria-labelledby="slowTitle">
