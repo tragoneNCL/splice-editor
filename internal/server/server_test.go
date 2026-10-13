@@ -757,3 +757,25 @@ func TestIPv6SameNetworkUsesThe64Prefix(t *testing.T) {
 		t.Error("link-local addresses must not count")
 	}
 }
+
+func TestUpdateEndpointsAreLocalOnly(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	// A plain local request is fine (and reports updates disabled in a dev build).
+	info := getJSON[map[string]any](t, ts.URL+"/api/update", nil)
+	if info["enabled"] != false {
+		t.Errorf("dev build should report updates disabled: %v", info)
+	}
+	// Through a proxy/tunnel, applying must be refused outright.
+	for _, h := range []string{"X-Forwarded-For", "CF-Connecting-IP", "X-Real-IP"} {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/update/apply", nil)
+		req.Header.Set(h, "203.0.113.5")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s: apply status %d, want 403", h, resp.StatusCode)
+		}
+	}
+}

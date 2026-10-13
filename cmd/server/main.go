@@ -25,8 +25,12 @@ import (
 
 	"filmeditor/internal/llm"
 	"filmeditor/internal/server"
+	"filmeditor/internal/update"
 	"filmeditor/web"
 )
+
+// version is set at build time: -ldflags "-X main.version=v1.2.3".
+var version = "dev"
 
 func envInt(name string, def int) int {
 	if v, err := strconv.Atoi(os.Getenv(name)); err == nil && v > 0 {
@@ -41,6 +45,7 @@ func main() {
 
 	openBrowser := flag.Bool("open", false, "open the editor in your browser when it starts")
 	flag.Parse()
+	update.CleanOld()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		log.Printf("WARNING: ffmpeg was not found. Install it first:\n%s", ffmpegHelp())
 	}
@@ -61,7 +66,14 @@ func main() {
 		TTL:            time.Duration(envInt("TTL_MINUTES", 60)) * time.Minute,
 		UI:             web.FS,
 		Port:           strconv.Itoa(envInt("PORT", 7860)),
+		Version:        version,
+		Restart:        restart,
 	}
+	repo := os.Getenv("SPLICE_REPO")
+	if repo == "" {
+		repo = "tragoneNCL/splice-editor"
+	}
+	cfg.Updater = &update.Updater{Repo: repo, Current: version, APIBase: os.Getenv("SPLICE_UPDATE_API")}
 	if g := llm.NewGeminiFromEnv(); g != nil {
 		cfg.AI, cfg.AILabel = *g, "gemini"
 		log.Printf("AI: gemini (%s)", g.Model)
@@ -81,7 +93,7 @@ func main() {
 		srv.Shutdown(shutdown)
 	}()
 	url := "http://localhost:" + strconv.Itoa(envInt("PORT", 7860))
-	log.Printf("Splice is running: open %s", url)
+	log.Printf("Splice %s is running: open %s", version, url)
 	if *openBrowser {
 		go func() { time.Sleep(500 * time.Millisecond); openURL(url) }()
 	}

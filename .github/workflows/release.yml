@@ -23,11 +23,13 @@ jobs:
             ext=""; [ "$os" = windows ] && ext=".exe"
             name="splice-${GITHUB_REF_NAME}-${os}-${arch}"
             mkdir -p "dist/$name"
-            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags="-s -w" -o "dist/$name/splice$ext" ./cmd/server
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/$name/splice$ext" ./cmd/server
             cp README.md "dist/$name/"
             (cd dist && if [ "$os" = windows ]; then zip -qr "$name.zip" "$name"; else tar czf "$name.tar.gz" "$name"; fi)
             rm -rf "dist/$name"
           done
+      - name: Checksums
+        run: cd dist && sha256sum * > checksums.txt && cat checksums.txt
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}

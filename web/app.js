@@ -130,6 +130,43 @@
     renderAI();
   }
 
+  // ───────── app updates (local app only) ─────────
+  async function checkForUpdate() {
+    try {
+      const u = await api("/api/update");
+      if (u.version && u.version !== "dev") $("footVersion").textContent = " · " + u.version;
+      if (!u.enabled || !u.available) { $("updatePill").hidden = true; return; }
+      $("updateText").textContent = `Update ${u.latest} ready`;
+      $("updatePill").title = u.notes || "";
+      $("updatePill").hidden = false;
+    } catch { /* not the local app, or offline: nothing to show */ }
+  }
+
+  async function applyUpdate() {
+    const pill = $("updatePill");
+    pill.disabled = true;
+    $("updateText").textContent = "Updating…";
+    try {
+      const r = await api("/api/update/apply", { method: "POST" });
+      $("updateText").textContent = "Restarting…";
+      // Wait for the new version to come back, then reload onto it.
+      const t0 = Date.now();
+      for (;;) {
+        await new Promise((res) => setTimeout(res, 700));
+        try {
+          const h = await api("/api/health");
+          if (!r.version || h.version === r.version) break;
+        } catch { /* still restarting */ }
+        if (Date.now() - t0 > 60000) break;
+      }
+      location.reload();
+    } catch (e) {
+      pill.disabled = false;
+      $("updateText").textContent = "Update available";
+      toast(e.message, "err");
+    }
+  }
+
   // ───────── clips ─────────
   const VIDEO_RE = /\.(mp4|mov|m4v|mkv|webm)$/i;
 
@@ -692,6 +729,9 @@
       show("viewSetup");
     });
     $("undoBtn").addEventListener("click", undo);
+    $("updatePill").addEventListener("click", applyUpdate);
+    checkForUpdate();
+    setInterval(checkForUpdate, 15 * 60 * 1000);
     $("reviseForm").addEventListener("submit", (e) => {
       e.preventDefault();
       const t = $("reviseInput").value.trim();

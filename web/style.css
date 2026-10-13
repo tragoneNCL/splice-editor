@@ -51,7 +51,8 @@ u { text-decoration-color: var(--border-2); text-underline-offset: 3px; }
 
 /* ── layout ── */
 .top, main, .foot { position: relative; z-index: 1; width: min(1180px, 100% - 32px); margin-inline: auto; }
-.top { display: flex; align-items: center; justify-content: space-between; padding: 22px 0 6px; }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 22px 0 6px; }
+.top .ai-pill + .ai-pill { margin-left: auto; }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: -0.02em; font-size: 19px; color: var(--text); text-decoration: none; }
 .mark { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; background: var(--grad); color: #fff; box-shadow: 0 6px 22px rgba(124, 92, 255, 0.45); }
 .mark svg { width: 18px; height: 18px; }
@@ -310,3 +311,8 @@ input[type="url"]:focus { border-color: var(--a1); box-shadow: 0 0 0 4px rgba(12
 
 .tips { margin: 0 0 4px; padding-left: 18px; color: var(--muted); font-size: 14px; display: grid; gap: 6px; }
 .tips b { color: var(--text); }
+
+.update-pill { margin-left: auto; border-color: rgba(255, 179, 92, 0.5); background: rgba(255, 179, 92, 0.1); color: #ffe2b0; }
+.update-pill .dot { background: var(--a3); box-shadow: 0 0 0 4px rgba(255, 179, 92, 0.2); }
+.update-pill + .ai-pill { margin-left: 0; }
+.ver { color: var(--faint); font-family: var(--mono); font-size: 12px; }

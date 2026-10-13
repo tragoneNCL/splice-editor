@@ -19,6 +19,9 @@
       <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h7l-3 10H4zM13 7h7l-3 10h-7z" fill="currentColor"/></svg></span>
       <span>Splice</span>
     </a>
+    <button class="ai-pill update-pill" id="updatePill" type="button" hidden>
+      <span class="dot" aria-hidden="true"></span><span id="updateText">Update available</span>
+    </button>
     <button class="ai-pill" id="aiPill" type="button" aria-haspopup="dialog">
       <span class="dot" id="aiDot"></span><span id="aiPillText">AI: optional</span>
     </button>
@@ -194,7 +197,7 @@
   </main>
 
   <footer class="foot">
-    <p>Your clips are processed, then deleted automatically within the hour. Your API key stays in this browser and is sent only with your own requests.</p>
+    <p>Splice<span class="ver" id="footVersion"></span> · Your clips are processed, then deleted automatically within the hour. Your API key stays in this browser and is sent only with your own requests.</p>
   </footer>
 
   <!-- ───────── AI CONNECT DIALOG ───────── -->

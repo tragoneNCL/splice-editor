@@ -34,6 +34,7 @@ import (
 	"filmeditor/internal/revise"
 	"filmeditor/internal/schema"
 	"filmeditor/internal/store"
+	"filmeditor/internal/update"
 )
 
 type Config struct {
@@ -52,6 +53,10 @@ type Config struct {
 	PublicIPURL string
 	// Port is the listen port, used to build direct local addresses.
 	Port string
+	// Version is shown in the UI; Updater and Restart enable self-update.
+	Version string
+	Updater *update.Updater
+	Restart func()
 	// DBPath is the SQLite file; "-" disables persistence. Default: DataDir/splice.db.
 	DBPath string
 
@@ -102,6 +107,7 @@ type Server struct {
 	queue chan func()
 
 	store   *store.Store
+	updates updateCache
 	net     netInfo
 	port    string
 	mu      sync.Mutex
@@ -207,6 +213,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("POST /api/verify", s.verify)
+	mux.HandleFunc("GET /api/update", s.updateInfo)
+	mux.HandleFunc("POST /api/update/apply", s.updateApply)
 	mux.HandleFunc("POST /api/ping", func(w http.ResponseWriter, r *http.Request) {
 		// Speed probe: swallow up to 4 MB so the client can time the upload.
 		n, _ := io.Copy(io.Discard, io.LimitReader(r.Body, 4<<20))
@@ -278,6 +286,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	_, fpErr := exec.LookPath("ffprobe")
 	writeJSON(w, 200, map[string]any{"ok": true, "ai": ai, "server_ai": s.cfg.AI != nil, "max_clips": s.cfg.MaxClips,
 		"ffmpeg":        ffErr == nil && fpErr == nil,
+		"version":       s.cfg.Version,
 		"extra":         extra,
 		"max_upload_mb": s.cfg.MaxUploadBytes >> 20})
 }
