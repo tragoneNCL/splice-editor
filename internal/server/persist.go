@@ -114,7 +114,7 @@ type recentJob struct {
 
 // me returns the visitor's saved preferences and recent edits.
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
-	v := visitorOf(r)
+	v := s.actor(r)
 	if v == "" || s.store == nil {
 		writeJSON(w, 200, map[string]any{"prefs": map[string]any{}, "recent": []recentJob{}})
 		return
@@ -135,7 +135,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) setPrefs(w http.ResponseWriter, r *http.Request) {
-	v := visitorOf(r)
+	v := s.actor(r)
 	if v == "" || s.store == nil {
 		fail(w, http.StatusBadRequest, "no visitor id")
 		return

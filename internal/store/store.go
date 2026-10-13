@@ -38,6 +38,12 @@ func Open(path string) (*Store, error) {
 			job_id TEXT NOT NULL, n INTEGER NOT NULL, parent INTEGER NOT NULL DEFAULT 0,
 			edl TEXT NOT NULL, instruction TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL,
 			PRIMARY KEY (job_id, n))`,
+		`CREATE TABLE IF NOT EXISTS users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+			name TEXT NOT NULL DEFAULT '', pass_hash TEXT NOT NULL, created INTEGER NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS sessions (
+			token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)`,
 		`CREATE TABLE IF NOT EXISTS visitors (
 			id TEXT PRIMARY KEY, prefs TEXT NOT NULL DEFAULT '{}', created INTEGER NOT NULL, seen INTEGER NOT NULL)`,
 	} {

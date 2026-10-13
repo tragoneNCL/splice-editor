@@ -28,6 +28,7 @@ const (
 )
 
 type uploadSession struct {
+	owner   string
 	mu      sync.Mutex
 	dir     string
 	created time.Time
@@ -65,7 +66,7 @@ func (s *Server) createUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	s.uploads[id] = &uploadSession{dir: dir, created: time.Now(), files: map[string]*uploadFile{}}
+	s.uploads[id] = &uploadSession{owner: s.actor(r), dir: dir, created: time.Now(), files: map[string]*uploadFile{}}
 	s.mu.Unlock()
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"upload_id": id, "max_bytes": s.cfg.MaxUploadBytes, "chunk_bytes": chunkSize,
@@ -86,6 +87,9 @@ func (s *Server) session(id string) *uploadSession {
 
 func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	up := s.session(r.PathValue("id"))
+	if up != nil && s.cfg.RequireAuth && up.owner != s.actor(r) {
+		up = nil
+	}
 	if up == nil {
 		fail(w, http.StatusNotFound, "no such upload (it may have expired)")
 		return
@@ -223,6 +227,9 @@ func (s *Server) createFromUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	up := s.session(req.UploadID)
+	if up != nil && s.cfg.RequireAuth && up.owner != s.actor(r) {
+		up = nil
+	}
 	if up == nil {
 		fail(w, http.StatusNotFound, "no such upload (it may have expired)")
 		return

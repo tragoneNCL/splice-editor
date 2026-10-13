@@ -68,6 +68,8 @@ func main() {
 		Port:           strconv.Itoa(envInt("PORT", 7860)),
 		Version:        version,
 		Restart:        restart,
+		RequireAuth:    os.Getenv("REQUIRE_AUTH") != "0",
+		ClosedSignup:   os.Getenv("CLOSED_SIGNUP") == "1",
 	}
 	repo := os.Getenv("SPLICE_REPO")
 	if repo == "" {

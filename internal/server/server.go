@@ -53,6 +53,10 @@ type Config struct {
 	PublicIPURL string
 	// Port is the listen port, used to build direct local addresses.
 	Port string
+	// RequireAuth makes every API call (except health and sign-in) need a
+	// signed-in account. ClosedSignup allows only the first account.
+	RequireAuth  bool
+	ClosedSignup bool
 	// Version is shown in the UI; Updater and Restart enable self-update.
 	Version string
 	Updater *update.Updater
@@ -106,14 +110,15 @@ type Server struct {
 	cfg   Config
 	queue chan func()
 
-	store   *store.Store
-	updates updateCache
-	net     netInfo
-	port    string
-	mu      sync.Mutex
-	jobs    map[string]*job
-	hits    map[string][]time.Time
-	uploads map[string]*uploadSession
+	store    *store.Store
+	authHits map[string][]time.Time
+	updates  updateCache
+	net      netInfo
+	port     string
+	mu       sync.Mutex
+	jobs     map[string]*job
+	hits     map[string][]time.Time
+	uploads  map[string]*uploadSession
 }
 
 type edlT = schema.EDL
@@ -174,7 +179,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{cfg: cfg, queue: make(chan func(), cfg.QueueSize),
-		jobs: map[string]*job{}, hits: map[string][]time.Time{}, uploads: map[string]*uploadSession{}}
+		jobs: map[string]*job{}, hits: map[string][]time.Time{}, authHits: map[string][]time.Time{}, uploads: map[string]*uploadSession{}}
 	if cfg.DBPath != "-" {
 		path := cfg.DBPath
 		if path == "" {
@@ -212,6 +217,11 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
+	mux.HandleFunc("POST /api/auth/signup", s.signup)
+	mux.HandleFunc("POST /api/auth/login", s.login)
+	mux.HandleFunc("POST /api/auth/logout", s.logout)
+	mux.HandleFunc("GET /api/auth/me", s.authMe)
+	mux.HandleFunc("POST /api/auth/password", s.changePassword)
 	mux.HandleFunc("POST /api/verify", s.verify)
 	mux.HandleFunc("GET /api/update", s.updateInfo)
 	mux.HandleFunc("POST /api/update/apply", s.updateApply)
@@ -238,7 +248,7 @@ func (s *Server) Handler() http.Handler {
 			static.ServeHTTP(w, r)
 		}))
 	}
-	return s.cors(mux)
+	return s.cors(s.withAuth(mux))
 }
 
 func (s *Server) cors(next http.Handler) http.Handler {
@@ -252,7 +262,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 		}
 		h.Set("Access-Control-Allow-Origin", s.cfg.AllowedOrigin)
 		h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-		h.Set("Access-Control-Allow-Headers", "Content-Type, X-AI-Provider, X-AI-Key, X-Visitor, X-Kind, X-Index, X-Name, X-Offset, X-Total")
+		h.Set("Access-Control-Allow-Headers", "Content-Type, X-Splice, X-AI-Provider, X-AI-Key, X-Visitor, X-Kind, X-Index, X-Name, X-Offset, X-Total")
 		h.Set("Vary", "Origin")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -439,7 +449,7 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, id, dir string, 
 	rec := schema.DefaultRecipe()
 	rec.Canvas, rec.TargetDuration = canvas, p.duration
 	j := &job{id: id, dir: dir, created: time.Now(), status: "queued", stage: "Queued", recipe: rec, clips: p.clips,
-		visitor: visitorOf(r), title: p.title, preset: p.preset, prompt: p.prompt}
+		visitor: s.actor(r), title: p.title, preset: p.preset, prompt: p.prompt}
 	s.mu.Lock()
 	s.jobs[id] = j
 	s.mu.Unlock()
@@ -652,7 +662,7 @@ func (s *Server) lookup(w http.ResponseWriter, r *http.Request) *job {
 	s.mu.Lock()
 	j := s.jobs[id]
 	s.mu.Unlock()
-	if j == nil {
+	if j == nil || (s.cfg.RequireAuth && j.visitor != s.actor(r)) {
 		fail(w, http.StatusNotFound, "no such job (results are kept for a limited time)")
 		return nil
 	}
@@ -809,7 +819,7 @@ func (s *Server) sweep(now time.Time) {
 	s.mu.Lock()
 	for id, j := range s.jobs {
 		j.mu.Lock()
-		old := now.Sub(j.created) > s.cfg.TTL && j.status != "running" && j.status != "queued"
+		old := !s.cfg.RequireAuth && now.Sub(j.created) > s.cfg.TTL && j.status != "running" && j.status != "queued"
 		j.mu.Unlock()
 		if old {
 			expired = append(expired, id)
