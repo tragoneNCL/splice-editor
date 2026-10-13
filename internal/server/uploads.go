@@ -37,6 +37,7 @@ type uploadSession struct {
 }
 
 type uploadFile struct {
+	name     string // original filename, as sent by the browser
 	path     string
 	total    int64           // declared full size
 	received map[int64]int64 // offset -> length of each stored chunk
@@ -159,7 +160,7 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	key := kind + strconv.Itoa(idx)
 	f := up.files[key]
 	if f == nil {
-		f = &uploadFile{path: filepath.Join(up.dir, fname), total: total, received: map[int64]int64{}}
+		f = &uploadFile{name: filepath.Base(name), path: filepath.Join(up.dir, fname), total: total, received: map[int64]int64{}}
 		up.files[key] = f
 	}
 	if f.total != total {

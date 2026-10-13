@@ -38,8 +38,10 @@ func (s *Server) persist(j *job) {
 	row := store.Job{
 		ID: j.id, Visitor: j.visitor, Created: j.created, Status: j.status, Stage: j.stage,
 		Progress: j.progress, Error: j.errMsg, Planner: j.planner, Revision: j.rev, Parent: j.parent,
-		Title: j.title, Preset: j.preset, Prompt: j.prompt, Dir: j.dir,
+		Title: j.title, Preset: j.preset, Prompt: j.prompt, Dir: j.dir, Name: j.name,
 	}
+	row.Media, _ = json.Marshal(j.mediaIDs)
+	row.Settings, _ = json.Marshal(j.settings)
 	if j.edl != nil {
 		row.EDL, _ = json.Marshal(j.edl)
 	}
@@ -81,7 +83,16 @@ func (s *Server) recoverJobs() {
 		}
 		j := &job{id: r.ID, dir: r.Dir, visitor: r.Visitor, created: r.Created, status: r.Status, stage: r.Stage,
 			progress: r.Progress, errMsg: r.Error, planner: r.Planner, rev: r.Revision, parent: r.Parent,
-			title: r.Title, preset: r.Preset, prompt: r.Prompt}
+			title: r.Title, preset: r.Preset, prompt: r.Prompt, name: r.Name}
+		_ = json.Unmarshal(r.Media, &j.mediaIDs)
+		_ = json.Unmarshal(r.Settings, &j.settings)
+		if j.settings.Preset == "" {
+			j.settings = defaultSettings()
+		}
+		if j.name == "" {
+			j.name = projectNameFor(j.title)
+		}
+		j.keepReference = len(j.mediaIDs) > 0
 		if len(r.EDL) > 0 {
 			var e = new(edlT)
 			if json.Unmarshal(r.EDL, e) == nil {

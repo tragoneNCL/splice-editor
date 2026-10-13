@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver: no cgo, builds in a slim container
@@ -38,6 +39,13 @@ func Open(path string) (*Store, error) {
 			job_id TEXT NOT NULL, n INTEGER NOT NULL, parent INTEGER NOT NULL DEFAULT 0,
 			edl TEXT NOT NULL, instruction TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL,
 			PRIMARY KEY (job_id, n))`,
+		`CREATE TABLE IF NOT EXISTS media (
+			id TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'clip',
+			name TEXT NOT NULL, path TEXT NOT NULL, thumb TEXT NOT NULL DEFAULT '', hash TEXT NOT NULL DEFAULT '',
+			size INTEGER NOT NULL DEFAULT 0, duration REAL NOT NULL DEFAULT 0,
+			width INTEGER NOT NULL DEFAULT 0, height INTEGER NOT NULL DEFAULT 0,
+			has_audio INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS media_owner ON media(owner, kind, created DESC)`,
 		`CREATE TABLE IF NOT EXISTS users (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE COLLATE NOCASE,
 			name TEXT NOT NULL DEFAULT '', pass_hash TEXT NOT NULL, created INTEGER NOT NULL)`,
@@ -48,6 +56,17 @@ func Open(path string) (*Store, error) {
 			id TEXT PRIMARY KEY, prefs TEXT NOT NULL DEFAULT '{}', created INTEGER NOT NULL, seen INTEGER NOT NULL)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
+	// Columns added after the first release; ignore "already exists".
+	for _, col := range []string{
+		`ALTER TABLE jobs ADD COLUMN name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE jobs ADD COLUMN media TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE jobs ADD COLUMN settings TEXT NOT NULL DEFAULT '{}'`,
+	} {
+		if _, err := db.Exec(col); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()
 			return nil, err
 		}
@@ -70,32 +89,46 @@ type Job struct {
 	Prompt             string
 	EDL, Recipe, Notes json.RawMessage
 	Dir                string
+	Name               string
+	Media              json.RawMessage // JSON array of media ids
+	Settings           json.RawMessage // JSON object
 }
 
 func (s *Store) UpsertJob(j Job) error {
 	_, err := s.db.Exec(`INSERT INTO jobs
-		(id, visitor, created, updated, status, stage, progress, error, planner, revision, parent, title, preset, prompt, edl, recipe, notes, dir)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		(id, visitor, created, updated, status, stage, progress, error, planner, revision, parent, title, preset, prompt, edl, recipe, notes, dir, name, media, settings)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			updated=excluded.updated, status=excluded.status, stage=excluded.stage, progress=excluded.progress,
 			error=excluded.error, planner=excluded.planner, revision=excluded.revision, parent=excluded.parent,
-			edl=excluded.edl, recipe=excluded.recipe, notes=excluded.notes, dir=excluded.dir`,
+			title=excluded.title, preset=excluded.preset, prompt=excluded.prompt,
+			edl=excluded.edl, recipe=excluded.recipe, notes=excluded.notes, dir=excluded.dir,
+			name=excluded.name, media=excluded.media, settings=excluded.settings`,
 		j.ID, j.Visitor, j.Created.Unix(), time.Now().Unix(), j.Status, j.Stage, j.Progress, j.Error, j.Planner,
-		j.Revision, j.Parent, j.Title, j.Preset, j.Prompt, string(j.EDL), string(j.Recipe), string(j.Notes), j.Dir)
+		j.Revision, j.Parent, j.Title, j.Preset, j.Prompt, string(j.EDL), string(j.Recipe), string(j.Notes), j.Dir,
+		j.Name, orJSON(j.Media, "[]"), orJSON(j.Settings, "{}"))
 	return err
 }
 
+func orJSON(v json.RawMessage, def string) string {
+	if len(v) == 0 {
+		return def
+	}
+	return string(v)
+}
+
 const jobCols = `id, visitor, created, updated, status, stage, progress, error, planner, revision, parent,
-	title, preset, prompt, edl, recipe, notes, dir`
+	title, preset, prompt, edl, recipe, notes, dir, name, media, settings`
 
 func scanJob(sc interface{ Scan(...any) error }) (Job, error) {
 	var j Job
 	var created, updated int64
-	var edl, recipe, notes string
+	var edl, recipe, notes, media, settings string
 	err := sc.Scan(&j.ID, &j.Visitor, &created, &updated, &j.Status, &j.Stage, &j.Progress, &j.Error, &j.Planner,
-		&j.Revision, &j.Parent, &j.Title, &j.Preset, &j.Prompt, &edl, &recipe, &notes, &j.Dir)
+		&j.Revision, &j.Parent, &j.Title, &j.Preset, &j.Prompt, &edl, &recipe, &notes, &j.Dir, &j.Name, &media, &settings)
 	j.Created, j.Updated = time.Unix(created, 0), time.Unix(updated, 0)
 	j.EDL, j.Recipe, j.Notes = json.RawMessage(edl), json.RawMessage(recipe), json.RawMessage(notes)
+	j.Media, j.Settings = json.RawMessage(media), json.RawMessage(settings)
 	return j, err
 }
 

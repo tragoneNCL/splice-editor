@@ -143,6 +143,12 @@ type job struct {
 	title    string
 	preset   string
 	prompt   string
+
+	// Project fields.
+	name          string
+	mediaIDs      []string
+	settings      projectSettings
+	keepReference bool // true when the inputs are library files (never deleted by a job)
 }
 
 // JobView is the JSON a client sees.
@@ -231,6 +237,19 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, 200, map[string]any{"ok": true, "bytes": n})
 	})
 	mux.HandleFunc("POST /api/uploads", s.createUpload)
+	mux.HandleFunc("POST /api/uploads/{id}/commit", s.commitUpload)
+	mux.HandleFunc("GET /api/media", s.listMedia)
+	mux.HandleFunc("GET /api/media/{id}/thumb", s.mediaThumb)
+	mux.HandleFunc("DELETE /api/media/{id}", s.deleteMedia)
+	mux.HandleFunc("GET /api/projects", s.listProjects)
+	mux.HandleFunc("POST /api/projects", s.createProject)
+	mux.HandleFunc("GET /api/projects/{id}", s.getProject)
+	mux.HandleFunc("PATCH /api/projects/{id}", s.patchProject)
+	mux.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
+	mux.HandleFunc("POST /api/projects/{id}/generate", s.generateProject)
+	mux.HandleFunc("GET /api/projects/{id}/video", s.video)
+	mux.HandleFunc("POST /api/projects/{id}/revise", s.reviseJob)
+	mux.HandleFunc("POST /api/projects/{id}/undo", s.undo)
 	mux.HandleFunc("PUT /api/uploads/{id}/chunk", s.uploadChunk)
 	mux.HandleFunc("POST /api/jobs", s.create)
 	mux.HandleFunc("GET /api/jobs/{id}", s.status)
@@ -261,7 +280,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 			return
 		}
 		h.Set("Access-Control-Allow-Origin", s.cfg.AllowedOrigin)
-		h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+		h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		h.Set("Access-Control-Allow-Headers", "Content-Type, X-Splice, X-AI-Provider, X-AI-Key, X-Visitor, X-Kind, X-Index, X-Name, X-Offset, X-Total")
 		h.Set("Vary", "Origin")
 		if r.Method == http.MethodOptions {
@@ -449,7 +468,8 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, id, dir string, 
 	rec := schema.DefaultRecipe()
 	rec.Canvas, rec.TargetDuration = canvas, p.duration
 	j := &job{id: id, dir: dir, created: time.Now(), status: "queued", stage: "Queued", recipe: rec, clips: p.clips,
-		visitor: s.actor(r), title: p.title, preset: p.preset, prompt: p.prompt}
+		visitor: s.actor(r), title: p.title, preset: p.preset, prompt: p.prompt,
+		name: projectNameFor(p.title), settings: projectSettings{Prompt: p.prompt, Preset: p.preset, Duration: p.duration, Title: p.title}}
 	s.mu.Lock()
 	s.jobs[id] = j
 	s.mu.Unlock()
@@ -582,7 +602,14 @@ func (s *Server) runJob(j *job, p params, ai llm.Asker, aiLabel string) {
 	// A reference video is only measured, never kept: remove it as soon as
 	// the job ends, whatever the outcome.
 	if p.inspo != "" {
-		defer os.Remove(p.inspo)
+		defer func() {
+			j.mu.Lock()
+			keep := j.keepReference
+			j.mu.Unlock()
+			if !keep {
+				os.Remove(p.inspo)
+			}
+		}()
 	}
 
 	// Reject files that are not video and cap total footage.
@@ -638,9 +665,14 @@ func (s *Server) runJob(j *job, p params, ai llm.Asker, aiLabel string) {
 	}
 	j.set(func(j *job) {
 		j.status, j.stage, j.progress = "done", "Done", 1
-		j.planner, j.edl, j.rev, j.parent, j.notes = res.Planner, &res.EDL, 1, 0, res.Notes
+		j.planner, j.edl, j.notes = res.Planner, &res.EDL, res.Notes
+		if j.rev > 0 { // regenerating: the previous version stays reachable through undo
+			j.parent, j.rev = j.rev, j.rev+1
+		} else {
+			j.parent, j.rev = 0, 1
+		}
 	})
-	s.saveRevision(j, "")
+	s.saveRevision(j, "generate")
 	s.persist(j)
 }
 
@@ -842,3 +874,12 @@ func (s *Server) sweep(now time.Time) {
 	s.mu.Unlock()
 	_ = stale
 }
+
+func projectNameFor(title string) string {
+	if t := cleanName(title); t != "" {
+		return t
+	}
+	return "Untitled project"
+}
+
+func validateYouTube(u string) (string, error) { return inspo.ValidateYouTubeURL(u) }
