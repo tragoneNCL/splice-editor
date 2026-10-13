@@ -47,6 +47,10 @@ type Config struct {
 	RatePerHour    int           // new jobs per IP per hour
 	JobTimeout     time.Duration
 	MinFreeBytes   int64 // keep at least this much disk free
+	// PublicIPURL is queried to learn the server's public address ("-" = off).
+	PublicIPURL string
+	// Port is the listen port, used to build direct local addresses.
+	Port string
 	// DBPath is the SQLite file; "-" disables persistence. Default: DataDir/splice.db.
 	DBPath string
 
@@ -100,6 +104,8 @@ type Server struct {
 	queue chan func()
 
 	store   *store.Store
+	net     netInfo
+	port    string
 	mu      sync.Mutex
 	jobs    map[string]*job
 	hits    map[string][]time.Time
@@ -190,6 +196,11 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 			}
 		}()
 	}
+	s.port = cfg.Port
+	if s.port == "" {
+		s.port = "7860"
+	}
+	go s.watchPublicIP(ctx, cfg.PublicIPURL)
 	go s.cleanupLoop(ctx)
 	return s, nil
 }
@@ -249,12 +260,18 @@ func fail(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
 }
 
-func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	ai := "none"
 	if s.cfg.AI != nil {
 		ai = s.cfg.AILabel
 	}
+	extra := map[string]any{}
+	if s.sameNetwork(r) {
+		extra["same_network"] = true
+		extra["local_urls"] = localURLs(s.port)
+	}
 	writeJSON(w, 200, map[string]any{"ok": true, "ai": ai, "server_ai": s.cfg.AI != nil, "max_clips": s.cfg.MaxClips,
+		"extra":         extra,
 		"max_upload_mb": s.cfg.MaxUploadBytes >> 20})
 }
 

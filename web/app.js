@@ -309,6 +309,19 @@
     return sess.upload_id;
   }
 
+  // You are on the same network as the editor but going the long way round
+  // (out to the internet and back): point at the direct address.
+  function showSameNetworkBanner(urls) {
+    const b = $("banner");
+    b.hidden = false;
+    b.style.borderColor = "rgba(61, 220, 151, 0.4)";
+    b.style.background = "rgba(61, 220, 151, 0.08)";
+    b.style.color = "#c9f5df";
+    const links = urls.map((u, i) =>
+      `<a href="${u}" style="color:#fff;font-weight:700">${i === 0 ? "on this computer" : "from another device on your Wi-Fi"}: ${u.replace("http://", "")}</a>`).join(" &nbsp;·&nbsp; ");
+    b.innerHTML = `<b>Faster way:</b> you're on the same network as the editor, so uploading through this link goes out to the internet and back. Use the direct address instead (uploads are instant): ${links}`;
+  }
+
   // Time a real 1 MB upload to the editor so a slow path is reported up front.
   async function probeSpeed() {
     const blob = new Blob([new Uint8Array(1 << 20)]);
@@ -329,7 +342,10 @@
       "<b>You rarely need that much.</b> A 30-second video usually only needs a few minutes of footage: try fewer or shorter clips.",
       "<b>Trim first.</b> Cut clips down in your phone's photo app before uploading.",
     ];
-    if (!/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+    if (state.localUrls && state.localUrls.length) {
+      tips.unshift("<b>You're on the same network as the editor.</b> Use the direct address and this takes seconds: " +
+        state.localUrls.map((u) => `<a href="${u}" style="color:#fff">${u.replace("http://", "")}</a>`).join(" or "));
+    } else if (!/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
       tips.push("<b>Testing from the same computer that runs the editor?</b> Open <code>http://localhost:7860</code> instead of this link. Going through the internet is what's slow.");
     }
     $("slowTips").innerHTML = tips.map((t) => `<li>${t}</li>`).join("");
@@ -693,6 +709,11 @@
         $("limitText").textContent = ` · up to ${h.max_upload_mb.toLocaleString()} MB per edit`;
       }
       if (h.server_ai && !state.key) { state.connected = true; state.provider = "claude"; }
+      const ex = h.extra || {};
+      if (ex.same_network && Array.isArray(ex.local_urls) && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+        state.localUrls = ex.local_urls;
+        showSameNetworkBanner(ex.local_urls);
+      }
       renderAI();
     }).catch(() => {
       state.backendDown = true;

@@ -22,7 +22,7 @@ import (
 
 func newTestServer(t *testing.T, mod func(*Config)) (*httptest.Server, *Server) {
 	t.Helper()
-	cfg := Config{DataDir: t.TempDir(), RatePerHour: 100}
+	cfg := Config{DataDir: t.TempDir(), RatePerHour: 100, PublicIPURL: "-"}
 	if mod != nil {
 		mod(&cfg)
 	}
@@ -703,5 +703,36 @@ func TestOverloadedAIFallsBackToAutomaticEditQuickly(t *testing.T) {
 	}
 	if d := time.Since(start); d > 30*time.Second {
 		t.Errorf("fallback took %v; an overloaded AI must not stall the edit", d)
+	}
+}
+
+func TestHealthFlagsVisitorsOnTheServersOwnNetwork(t *testing.T) {
+	ipSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("203.0.113.9\n"))
+	}))
+	defer ipSrv.Close()
+	ts, _ := newTestServer(t, func(c *Config) { c.PublicIPURL = ipSrv.URL; c.Port = "7860" })
+
+	var same map[string]any
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) { // the public IP is learned in the background
+		same = getJSON[map[string]any](t, ts.URL+"/api/health", map[string]string{"CF-Connecting-IP": "203.0.113.9"})
+		if e, _ := same["extra"].(map[string]any); e["same_network"] == true {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	extra, _ := same["extra"].(map[string]any)
+	if extra["same_network"] != true {
+		t.Fatalf("same address not detected: %v", same)
+	}
+	urls, _ := extra["local_urls"].([]any)
+	if len(urls) == 0 || urls[0] != "http://localhost:7860" {
+		t.Errorf("local_urls = %v", urls)
+	}
+
+	other := getJSON[map[string]any](t, ts.URL+"/api/health", map[string]string{"CF-Connecting-IP": "198.51.100.7"})
+	if e, _ := other["extra"].(map[string]any); e["same_network"] == true {
+		t.Errorf("a visitor elsewhere must not be told to use local addresses: %v", other)
 	}
 }

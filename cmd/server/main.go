@@ -44,6 +44,7 @@ func main() {
 		RatePerHour:    envInt("RATE_PER_HOUR", 6),
 		TTL:            time.Duration(envInt("TTL_MINUTES", 60)) * time.Minute,
 		UI:             web.FS,
+		Port:           strconv.Itoa(envInt("PORT", 7860)),
 	}
 	if g := llm.NewGeminiFromEnv(); g != nil {
 		cfg.AI, cfg.AILabel = *g, "gemini"
