@@ -1,0 +1,19 @@
+# build + local data
+/bin/
+*.exe
+/splice
+/data/
+/testfootage/
+*.mp4
+*.mov
+*.m4a
+*.mp3
+!web/**
+# secrets
+.env
+.env.*
+*.key
+# editor/OS
+.DS_Store
+.idea/
+.vscode/

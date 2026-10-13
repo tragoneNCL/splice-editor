@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Splice — hands-off video editing</title>
+  <meta name="description" content="Drop in your clips and a sentence. Get back a finished edit.">
+  <meta name="theme-color" content="#07070b">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+
+  <header class="top">
+    <a class="brand" href="./" aria-label="Splice home">
+      <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h7l-3 10H4zM13 7h7l-3 10h-7z" fill="currentColor"/></svg></span>
+      <span>Splice</span>
+    </a>
+    <button class="ai-pill" id="aiPill" type="button" aria-haspopup="dialog">
+      <span class="dot" id="aiDot"></span><span id="aiPillText">Connect AI</span>
+    </button>
+  </header>
+
+  <div class="banner" id="banner" role="status" hidden></div>
+
+  <main>
+    <!-- ───────── SETUP ───────── -->
+    <section id="viewSetup" class="view">
+      <div class="hero">
+        <p class="eyebrow">Hands-off video editor</p>
+        <h1>Drop in your clips.<br><span class="grad">Get back a finished edit.</span></h1>
+        <p class="sub">Splice fixes orientation, finds the best moments, picks a strong opening, cuts to your brief, and exports it ready to post. No timeline required.</p>
+      </div>
+
+      <div class="grid">
+        <div class="col">
+          <div class="card" id="cardClips">
+            <div class="card-h"><span class="num">1</span><h2>Your footage</h2><span class="meta" id="clipMeta"></span></div>
+            <div class="drop" id="drop" tabindex="0" role="button" aria-label="Add video clips">
+              <input id="fileInput" type="file" accept="video/*,.mp4,.mov,.m4v,.mkv,.webm" multiple hidden>
+              <div class="drop-ico" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+              </div>
+              <p class="drop-t">Drag &amp; drop videos here</p>
+              <p class="drop-s">or <u>browse</u> · MP4, MOV, WebM · phone footage is fine</p>
+            </div>
+            <ul class="clips" id="clipList" aria-live="polite"></ul>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><span class="num">2</span><h2>The brief</h2></div>
+            <label class="field">
+              <span>What should this video feel like?</span>
+              <textarea id="prompt" rows="3" maxlength="1000" placeholder="e.g. Fast-paced travel reel, open on the best view, keep it upbeat"></textarea>
+            </label>
+            <div class="chips" id="ideas" aria-label="Ideas">
+              <button type="button">Fast-paced travel reel</button>
+              <button type="button">Calm, cinematic and slow</button>
+              <button type="button">Punchy product promo</button>
+              <button type="button">Highlights, best moments only</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="card">
+            <div class="card-h"><span class="num">3</span><h2>Format</h2></div>
+            <div class="seg" id="presets" role="radiogroup" aria-label="Aspect ratio">
+              <button type="button" role="radio" aria-checked="true" data-v="9:16"><i class="ar a916"></i><b>9:16</b><small>Reels · TikTok</small></button>
+              <button type="button" role="radio" aria-checked="false" data-v="1:1"><i class="ar a11"></i><b>1:1</b><small>Feed</small></button>
+              <button type="button" role="radio" aria-checked="false" data-v="4:5"><i class="ar a45"></i><b>4:5</b><small>Portrait</small></button>
+              <button type="button" role="radio" aria-checked="false" data-v="16:9"><i class="ar a169"></i><b>16:9</b><small>YouTube</small></button>
+            </div>
+
+            <div class="field">
+              <span class="row"><span>Length</span><output id="durOut">30s</output></span>
+              <input id="duration" type="range" min="10" max="90" step="5" value="30" aria-label="Target length in seconds">
+            </div>
+
+            <label class="field">
+              <span>Title <em>optional</em></span>
+              <input id="title" type="text" maxlength="80" placeholder="Shown at the start">
+            </label>
+
+            <div class="field">
+              <span>Music <em>optional</em></span>
+              <label class="file" id="musicLabel">
+                <input id="musicInput" type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg" hidden>
+                <span id="musicText">Choose a track…</span>
+                <button type="button" id="musicClear" class="x" aria-label="Remove music" hidden>×</button>
+              </label>
+            </div>
+          </div>
+
+          <button class="go" id="go" type="button" disabled>
+            <span>Create my edit</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <p class="fine" id="goHint">Add at least one clip to begin.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────── WORKING ───────── -->
+    <section id="viewWork" class="view" hidden>
+      <div class="work card">
+        <div class="ring" aria-hidden="true">
+          <svg viewBox="0 0 120 120"><circle class="trk" cx="60" cy="60" r="52"/><circle class="bar" id="ringBar" cx="60" cy="60" r="52"/></svg>
+          <span id="ringPct">0%</span>
+        </div>
+        <h2 id="workTitle">Uploading your footage</h2>
+        <p class="sub" id="workSub">This usually takes a minute or two.</p>
+        <ol class="steps" id="steps">
+          <li data-s="upload"><i></i>Upload</li>
+          <li data-s="orient"><i></i>Check orientation</li>
+          <li data-s="analyze"><i></i>Find the best moments</li>
+          <li data-s="plan"><i></i>Plan the edit</li>
+          <li data-s="render"><i></i>Render</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ───────── RESULT ───────── -->
+    <section id="viewResult" class="view" hidden>
+      <div class="result">
+        <div class="player-col">
+          <div class="player" id="playerWrap">
+            <video id="player" controls playsinline preload="metadata"></video>
+            <div class="busy" id="playerBusy" hidden><span class="spin"></span><p id="busyText">Re-rendering…</p></div>
+          </div>
+        </div>
+        <div class="side-col">
+          <div class="card">
+            <div class="card-h"><h2>Your edit is ready</h2></div>
+            <p class="sub" id="resultMeta"></p>
+            <div class="actions">
+              <a class="btn primary" id="download" download="splice-edit.mp4">Download MP4</a>
+              <button class="btn" id="again" type="button">New edit</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h2>Change it with a sentence</h2></div>
+            <form id="reviseForm" class="revise">
+              <input id="reviseInput" type="text" maxlength="500" placeholder="e.g. Make the second shot slow motion" autocomplete="off">
+              <button class="btn primary" type="submit" id="reviseGo">Apply</button>
+            </form>
+            <div class="chips" id="reviseIdeas">
+              <button type="button">Make it shorter and punchier</button>
+              <button type="button">Slow-mo the best shot</button>
+              <button type="button">Add a title: Summer 2026</button>
+              <button type="button">Mute the clips, keep the music</button>
+            </div>
+            <p class="fine" id="reviseHint"></p>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h2>Timeline</h2><span class="meta" id="tlMeta"></span></div>
+            <div class="timeline" id="timeline" aria-label="Cuts in order"></div>
+            <ul class="legend" id="legend"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>Your clips are processed, then deleted automatically within the hour. Your API key stays in this browser and is sent only with your own requests.</p>
+  </footer>
+
+  <!-- ───────── AI CONNECT DIALOG ───────── -->
+  <dialog id="aiDialog" aria-labelledby="aiTitle">
+    <form method="dialog" class="dlg-x"><button aria-label="Close">×</button></form>
+    <h2 id="aiTitle">Connect your AI</h2>
+    <p class="sub">Splice uses an AI model to look at your footage and make the creative calls. Use your own key, so it runs on your account.</p>
+
+    <div class="seg two" id="provider" role="radiogroup" aria-label="AI provider">
+      <button type="button" role="radio" aria-checked="true" data-v="claude"><b>Claude</b><small>Best quality · pay as you go</small></button>
+      <button type="button" role="radio" aria-checked="false" data-v="gemini"><b>Gemini</b><small>Free tier available</small></button>
+    </div>
+
+    <label class="field">
+      <span>API key</span>
+      <input id="aiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key">
+    </label>
+    <p class="fine" id="keyHelp"></p>
+    <p class="err" id="aiErr" role="alert" hidden></p>
+
+    <div class="dlg-actions">
+      <button class="btn primary" id="aiConnect" type="button">Connect</button>
+      <button class="btn" id="aiForget" type="button" hidden>Disconnect</button>
+      <button class="btn ghost" id="aiSkip" type="button">Continue without AI</button>
+    </div>
+    <p class="fine">Without AI you still get a clean automatic edit; with it, Splice sees your footage, fixes upside-down clips, and follows your brief.</p>
+  </dialog>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

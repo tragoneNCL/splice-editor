@@ -1,0 +1,35 @@
+# Publishes the web UI to GitHub Pages.
+# Set the repository variable SPLICE_API (Settings -> Secrets and variables ->
+# Actions -> Variables) to your running backend's URL, e.g. https://you-splice.hf.space
+name: Pages
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Point the UI at the backend
+        env:
+          SPLICE_API: ${{ vars.SPLICE_API }}
+        run: |
+          printf 'window.SPLICE_API = %s;\n' "$(printf '%s' "$SPLICE_API" | jq -Rs .)" > web/config.js
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deployment
+        uses: actions/deploy-pages@v4

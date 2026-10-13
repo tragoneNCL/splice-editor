@@ -1,0 +1,68 @@
+# Splice
+
+Hands-off video editing. Drop in clips and a sentence; get back a finished edit.
+
+- **Fixes orientation** — phone rotation metadata is applied deterministically, and a vision check catches clips stored upside-down with no metadata.
+- **Picks the moments** — scene detection + quality scoring, then an AI planner chooses a strong opening and cuts to your brief.
+- **Real editing features** — speed, volume, transitions, titles/captions, music with ducking, zoom/crop, color, fades, export presets.
+- **Edit by sentence** — "make the second shot slow motion" revises the same project file and re-renders.
+- **Bring your own AI key** — Claude or Gemini (free tier). Keys stay in the visitor's browser and are never stored server-side.
+
+The edit decision list (EDL) is the project file: the AI writes it, the renderer plays it, and people or chat commands edit the same document.
+
+## Run it locally
+
+Requires Go 1.27+ and `ffmpeg` on your PATH.
+
+```bash
+go run ./cmd/server          # http://localhost:7860  (UI + API)
+go test ./...                # fast tests; synthetic footage, no AI needed
+```
+
+Command-line tools:
+
+```bash
+go run ./cmd/synth -out ./testfootage            # sample clips incl. upside-down + phone-rotated
+go run ./cmd/auto -clips ./testfootage -prompt "calm and simple" -out final.mp4
+go run ./cmd/revise -edl edit.json -do "slow-mo the second shot"
+FILMEDITOR_LIVE=1 go test ./internal/e2e -v      # live model checks (uses your claude login)
+```
+
+## Deploy
+
+The site has two parts. **GitHub Pages can only host static files**, so the editing backend (Go + ffmpeg) runs somewhere that can run containers; the Pages site calls it.
+
+1. **Backend** — build the included `Dockerfile` on any container host:
+   - **Hugging Face Spaces** (free, generous RAM): new Space → SDK *Docker* → push this repo; use `deploy/huggingface/README.md` as the Space's `README.md`.
+   - **Render** (free tier, sleeps when idle): New → Blueprint → select this repo (`render.yaml`).
+   - Anywhere else: `docker build -t splice . && docker run -p 7860:7860 splice`.
+2. **Front end** — enable Pages (Settings → Pages → Source: GitHub Actions), then set the repository **variable** `SPLICE_API` to the backend URL and re-run the *Pages* workflow.
+
+The backend also serves the UI itself, so its own URL works standalone with no Pages step.
+
+### Configuration (environment variables)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `7860` | listen port |
+| `DATA_DIR` | temp dir | uploads/results (auto-deleted after `TTL_MINUTES`) |
+| `ALLOWED_ORIGIN` | `*` | CORS origin; set to your Pages URL |
+| `GEMINI_API_KEY` | – | optional server-side key so visitors can skip bringing one |
+| `GEMINI_MODEL` / `ANTHROPIC_MODEL` | see code | model overrides |
+| `MAX_UPLOAD_MB`, `MAX_CLIPS`, `WORKERS`, `RATE_PER_HOUR`, `TTL_MINUTES` | 400, 12, 1, 6, 60 | limits |
+
+## Layout
+
+```
+cmd/server    HTTP API + embedded UI        internal/pipeline  the whole edit as one call
+cmd/auto      one-shot CLI                  internal/understand shots + quality scoring
+cmd/revise    edit-by-sentence CLI          internal/orient    upside-down safety net
+cmd/synth     test footage generator        internal/plan      rule-based + LLM planners
+web/          static front end              internal/render    ffmpeg graph: speed, xfade, text, music…
+                                            internal/project   undo/redo editing ops
+                                            internal/llm       Claude (SDK) / Gemini / claude CLI
+```
+
+## Privacy and limits
+
+Uploaded clips are stored only for the job and deleted automatically. Visitors' API keys travel only in request headers for their own jobs and are never logged or persisted. Bounded by upload size, clip count, queue length and a per-IP rate limit.
