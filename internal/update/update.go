@@ -184,6 +184,9 @@ func (u *Updater) Apply(ctx context.Context, rel Release) error {
 			return err
 		}
 	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real // update the file itself, not a launcher link to it
+	}
 	return replace(exe, bin, u.goos())
 }
 

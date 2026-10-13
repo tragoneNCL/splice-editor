@@ -19,6 +19,7 @@ import (
 	"filmeditor/internal/ingest"
 	"filmeditor/internal/llm"
 	"filmeditor/internal/synth"
+	"filmeditor/web"
 )
 
 func newTestServer(t *testing.T, mod func(*Config)) (*httptest.Server, *Server) {
@@ -777,5 +778,78 @@ func TestUpdateEndpointsAreLocalOnly(t *testing.T) {
 		if resp.StatusCode != http.StatusForbidden {
 			t.Errorf("%s: apply status %d, want 403", h, resp.StatusCode)
 		}
+	}
+}
+
+func TestInstallPageManifestAndIconsAreServed(t *testing.T) {
+	ts, _ := newTestServer(t, func(c *Config) { c.UI = web.FS })
+	get := func(path string) (*http.Response, string) {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp, string(b)
+	}
+	if r, body := get("/install"); r.StatusCode != 200 || !strings.Contains(body, "Install") {
+		t.Errorf("/install: %d", r.StatusCode)
+	}
+	r, body := get("/manifest.webmanifest")
+	if r.StatusCode != 200 {
+		t.Fatalf("manifest: %d", r.StatusCode)
+	}
+	var m struct {
+		Name  string `json:"name"`
+		Icons []struct {
+			Src  string `json:"src"`
+			Type string `json:"type"`
+		} `json:"icons"`
+	}
+	if err := json.Unmarshal([]byte(body), &m); err != nil || m.Name != "Splice" || len(m.Icons) < 2 {
+		t.Fatalf("manifest content: %v %+v", err, m)
+	}
+	for _, ic := range m.Icons {
+		if r, _ := get("/" + ic.Src); r.StatusCode != 200 || r.Header.Get("Content-Type") != "image/png" {
+			t.Errorf("icon %s: %d %s", ic.Src, r.StatusCode, r.Header.Get("Content-Type"))
+		}
+	}
+	if r, _ := get("/sw.js"); r.StatusCode != 200 || !strings.Contains(r.Header.Get("Cache-Control"), "no-cache") {
+		t.Errorf("service worker must be served fresh: %d %q", r.StatusCode, r.Header.Get("Cache-Control"))
+	}
+}
+
+func TestQuitIsLocalOnly(t *testing.T) {
+	quit := make(chan struct{}, 1)
+	ts, _ := newTestServer(t, func(c *Config) { c.Quit = func() { quit <- struct{}{} } })
+	// Through a proxy/tunnel header: refused, and nothing stops.
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/quit", nil)
+	req.Header.Set("CF-Connecting-IP", "203.0.113.7")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("remote quit = %d, want 403", resp.StatusCode)
+	}
+	select {
+	case <-quit:
+		t.Fatal("a remote caller stopped the app")
+	case <-time.After(600 * time.Millisecond):
+	}
+	// The local machine can.
+	resp, err = http.Post(ts.URL+"/api/quit", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("local quit = %d", resp.StatusCode)
+	}
+	select {
+	case <-quit:
+	case <-time.After(2 * time.Second):
+		t.Error("quit was not triggered")
 	}
 }

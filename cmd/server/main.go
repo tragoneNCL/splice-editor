@@ -46,6 +46,7 @@ func main() {
 	openBrowser := flag.Bool("open", false, "open the editor in your browser when it starts")
 	flag.Parse()
 	update.CleanOld()
+	useBundledTools()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		log.Printf("WARNING: ffmpeg was not found. Install it first:\n%s", ffmpegHelp())
 	}
@@ -68,6 +69,7 @@ func main() {
 		Port:           strconv.Itoa(envInt("PORT", 7860)),
 		Version:        version,
 		Restart:        restart,
+		Quit:           stop,
 		RequireAuth:    os.Getenv("REQUIRE_AUTH") != "0",
 		ClosedSignup:   os.Getenv("CLOSED_SIGNUP") == "1",
 	}
@@ -126,4 +128,24 @@ func openURL(url string) {
 		cmd = exec.Command("xdg-open", url)
 	}
 	_ = cmd.Start()
+}
+
+// useBundledTools puts the folder holding this program first on PATH, so an
+// ffmpeg/ffprobe shipped alongside it is used before any system install.
+func useBundledTools() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	dir := filepath.Dir(exe)
+	name := "ffmpeg"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+		os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
 }

@@ -9,6 +9,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -23,6 +26,7 @@
       <a href="#/home" id="navHome">Projects</a>
       <a href="#/library" id="navLib">Library</a>
     </nav>
+    <button class="ai-pill install-pill" id="installPill" type="button" hidden>Install app</button>
     <button class="ai-pill update-pill" id="updatePill" type="button" hidden>
       <span class="dot" aria-hidden="true"></span><span id="updateText">Update available</span>
     </button>
@@ -240,7 +244,7 @@
   </main>
 
   <footer class="foot">
-    <p>Splice<span class="ver" id="footVersion"></span> · Your footage and projects are saved on this computer. Your AI key stays in this browser and is only sent with your own requests.</p>
+    <p>Splice<span class="ver" id="footVersion"></span> · <a href="install.html">Get the desktop app</a> · <button class="link" id="quitBtn" type="button" hidden>Quit Splice</button> · Your footage and projects are saved on this computer. Your AI key stays in this browser and is only sent with your own requests.</p>
   </footer>
 
   <!-- ───────── AI CONNECT DIALOG ───────── -->

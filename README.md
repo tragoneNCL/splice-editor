@@ -30,6 +30,18 @@ go run ./cmd/revise -edl edit.json -do "slow-mo the second shot"
 FILMEDITOR_LIVE=1 go test ./internal/e2e -v      # live model checks (uses your claude login)
 ```
 
+## Install
+
+- **Website:** open `/install` on any running copy (or `web/install.html`). It detects your system and offers the download plus a one-line installer.
+- **Mac / Linux:** `curl -fsSL https://raw.githubusercontent.com/tragoneNCL/splice-editor/main/install.sh | sh`
+- **Windows (PowerShell):** `irm https://raw.githubusercontent.com/tragoneNCL/splice-editor/main/install.ps1 | iex`
+
+Both verify the download's checksum, install ffmpeg if it's missing, and need no administrator rights. The app updates itself afterwards. It is also an installable web app (your browser's "Install" button).
+
+## Accounts, projects and library
+
+Everything is stored on the computer running the app: accounts (email + password, bcrypt-hashed), a footage library (upload once, reuse), and projects with full history and undo. Set `REQUIRE_AUTH=0` to run without accounts, or `CLOSED_SIGNUP=1` to allow only the first account.
+
 ## Fastest: run it as a local app
 
 Everything runs on your own computer, so there is no upload at all: a 1.8 GB

@@ -57,6 +57,8 @@ type Config struct {
 	// signed-in account. ClosedSignup allows only the first account.
 	RequireAuth  bool
 	ClosedSignup bool
+	// Quit, if set, stops the whole app (local machine only, via /api/quit).
+	Quit func()
 	// Version is shown in the UI; Updater and Restart enable self-update.
 	Version string
 	Updater *update.Updater
@@ -229,6 +231,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/auth/me", s.authMe)
 	mux.HandleFunc("POST /api/auth/password", s.changePassword)
 	mux.HandleFunc("POST /api/verify", s.verify)
+	mux.HandleFunc("POST /api/quit", s.quit)
 	mux.HandleFunc("GET /api/update", s.updateInfo)
 	mux.HandleFunc("POST /api/update/apply", s.updateApply)
 	mux.HandleFunc("POST /api/ping", func(w http.ResponseWriter, r *http.Request) {
@@ -260,6 +263,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/me/prefs", s.setPrefs)
 	if s.cfg.UI != nil {
 		static := http.FileServerFS(s.cfg.UI)
+		mux.HandleFunc("GET /install", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/install.html", http.StatusFound)
+		})
 		mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// The UI ships inside the binary and changes with it; never let a
 			// browser keep an old script (it caused a "stuck at 0%" report).
@@ -316,6 +322,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "ai": ai, "server_ai": s.cfg.AI != nil, "max_clips": s.cfg.MaxClips,
 		"ffmpeg":        ffErr == nil && fpErr == nil,
 		"version":       s.cfg.Version,
+		"local":         isLocalCaller(r),
 		"extra":         extra,
 		"max_upload_mb": s.cfg.MaxUploadBytes >> 20})
 }

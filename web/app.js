@@ -993,8 +993,30 @@
     window.addEventListener("hashchange", route);
   }
 
+  // ═════════ installable web app + quit ═════════
+  function setupInstallAndQuit() {
+    let deferred = null;
+    window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); deferred = e; $("installPill").hidden = false; });
+    $("installPill").addEventListener("click", async () => {
+      if (!deferred) return;
+      deferred.prompt();
+      deferred = null;
+      $("installPill").hidden = true;
+    });
+    $("quitBtn").addEventListener("click", async () => {
+      if (!(await confirmBox("Quit Splice?", "The app will stop. Your projects and footage are saved; open Splice again any time.", "Quit"))) return;
+      try { await api("/api/quit", { method: "POST" }); } catch { /* it may drop the connection as it exits */ }
+      document.body.innerHTML = '<main style="max-width:520px;margin:20vh auto;text-align:center;font:16px system-ui;color:#ddd">' +
+        '<h1 style="font-size:28px">Splice has stopped</h1><p>You can close this tab. Start Splice again whenever you like.</p></main>';
+    });
+    if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
+      navigator.serviceWorker.register("sw.js").catch(() => { /* optional */ });
+    }
+  }
+
   async function init() {
     bind();
+    setupInstallAndQuit();
     renderAI();
     try {
       const h = await api("/api/health");
@@ -1004,6 +1026,7 @@
         $("limitText").textContent = `MP4, MOV, WebM · up to ${h.max_upload_mb.toLocaleString()} MB per project`;
       }
       if (h.server_ai && !state.key) { state.connected = true; state.provider = "claude"; }
+      if (h.local) $("quitBtn").hidden = false;
       if (h.ffmpeg === false) {
         const b = $("banner");
         b.hidden = false;

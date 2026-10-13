@@ -4,5 +4,5 @@ package web
 
 import "embed"
 
-//go:embed index.html style.css app.js config.js
+//go:embed index.html style.css app.js config.js install.html install.js manifest.webmanifest sw.js icons
 var FS embed.FS

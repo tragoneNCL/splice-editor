@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Install Splice</title>
+  <meta name="description" content="Download Splice for Mac, Windows or Linux. Runs on your computer, so there's no upload.">
+  <meta name="theme-color" content="#07070b">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+  <header class="top">
+    <a class="brand" href="./" aria-label="Splice home">
+      <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h7l-3 10H4zM13 7h7l-3 10h-7z" fill="currentColor"/></svg></span>
+      <span>Splice</span>
+    </a>
+    <a class="ai-pill" href="./">Open in browser</a>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Desktop app</p>
+      <h1>Install <span class="grad">Splice</span></h1>
+      <p class="sub">It runs on your computer, so there's no upload: a 2 GB set of clips is edited in about half a minute. It updates itself, so you only install once.</p>
+    </section>
+
+    <section class="install-grid">
+      <div class="card primary-dl" id="primary">
+        <p class="eyebrow" id="detected">Detecting your system…</p>
+        <a class="btn primary big" id="primaryBtn" href="#all" aria-disabled="true">Download</a>
+        <p class="fine" id="primaryNote"></p>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h2>One-line install</h2></div>
+        <p class="sub">Verifies the download's checksum, sets everything up, and installs ffmpeg if you don't have it.</p>
+        <div class="tabs seg two" id="osTabs" role="tablist" aria-label="Operating system">
+          <button type="button" role="tab" aria-selected="true" data-v="unix"><b>Mac &amp; Linux</b></button>
+          <button type="button" role="tab" aria-selected="false" data-v="win"><b>Windows</b></button>
+        </div>
+        <pre class="code" id="cmd"><code id="cmdText"></code></pre>
+        <button class="btn" id="copyCmd" type="button">Copy command</button>
+        <p class="fine" id="cmdHelp"></p>
+      </div>
+    </section>
+
+    <section class="card" id="all">
+      <div class="card-h"><h2>All downloads</h2><span class="meta" id="relMeta"></span></div>
+      <ul class="dl-list" id="dlList"></ul>
+      <p class="fine" id="noRelease" hidden>The first release hasn't been published yet. Use the one-line install once it is, or run from source (see the README).</p>
+    </section>
+
+    <section class="card">
+      <div class="card-h"><h2>First launch</h2></div>
+      <ol class="steps-doc">
+        <li><b>Start it:</b> run <code>splice -open</code> (or open <b>Splice</b> from the Start menu on Windows). Your browser opens to the app.</li>
+        <li><b>Mac says it can't verify the developer?</b> That's because the app isn't signed with a paid Apple certificate yet. Right-click the file and choose <b>Open</b>, or run <code>xattr -d com.apple.quarantine ~/.local/share/splice/splice</code>. The one-line installer does this for you.</li>
+        <li><b>Windows SmartScreen:</b> choose <b>More info → Run anyway</b>.</li>
+        <li><b>Your data:</b> projects and footage stay on this computer. Nothing is uploaded unless you connect an AI key, and then only small preview frames are sent.</li>
+      </ol>
+    </section>
+
+    <section class="card" id="pwaCard" hidden>
+      <div class="card-h"><h2>Or install the web app</h2></div>
+      <p class="sub">If you already run Splice, your browser can add it as its own window.</p>
+      <button class="btn primary" id="pwaInstall" type="button">Install as an app</button>
+    </section>
+  </main>
+
+  <footer class="foot"><p>Splice <span class="ver" id="ver"></span></p></footer>
+  <script src="config.js"></script>
+  <script src="install.js"></script>
+</body>
+</html>
