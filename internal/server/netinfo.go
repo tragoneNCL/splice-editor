@@ -74,10 +74,46 @@ func remoteIP(r *http.Request) string {
 	return clientIP(r)
 }
 
-// sameNetwork reports whether the visitor shares the server's public address.
+// sameNetwork reports whether the visitor is on the server's own network.
+// IPv4: same public address. IPv6: devices behind one router share a /64
+// prefix, so compare against the prefixes of this host's own addresses.
 func (s *Server) sameNetwork(r *http.Request) bool {
-	pub := s.net.get()
-	return pub != "" && remoteIP(r) == pub
+	ip := net.ParseIP(strings.TrimSpace(remoteIP(r)))
+	if ip == nil {
+		return false
+	}
+	if v4 := ip.To4(); v4 != nil {
+		pub := s.net.get()
+		return pub != "" && v4.String() == pub
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	return sharesV6Prefix(ip, addrs)
+}
+
+// sharesV6Prefix reports whether ip falls in the same /64 as any global
+// unicast IPv6 address in addrs.
+func sharesV6Prefix(ip net.IP, addrs []net.Addr) bool {
+	ip = ip.To16()
+	if ip == nil || ip.To4() != nil || !ip.IsGlobalUnicast() {
+		return false
+	}
+	for _, a := range addrs {
+		n, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		own := n.IP.To16()
+		if own == nil || n.IP.To4() != nil || !n.IP.IsGlobalUnicast() || n.IP.IsPrivate() {
+			continue
+		}
+		if string(own[:8]) == string(ip[:8]) {
+			return true
+		}
+	}
+	return false
 }
 
 // localURLs lists the direct addresses a same-network visitor can use.

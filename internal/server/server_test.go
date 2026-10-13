@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -734,5 +735,25 @@ func TestHealthFlagsVisitorsOnTheServersOwnNetwork(t *testing.T) {
 	other := getJSON[map[string]any](t, ts.URL+"/api/health", map[string]string{"CF-Connecting-IP": "198.51.100.7"})
 	if e, _ := other["extra"].(map[string]any); e["same_network"] == true {
 		t.Errorf("a visitor elsewhere must not be told to use local addresses: %v", other)
+	}
+}
+
+func TestIPv6SameNetworkUsesThe64Prefix(t *testing.T) {
+	mk := func(cidr string) net.Addr {
+		ip, n, err := net.ParseCIDR(cidr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &net.IPNet{IP: ip, Mask: n.Mask}
+	}
+	addrs := []net.Addr{mk("2600:382:aff8:486b:9c97:403f:301b:1ca1/64"), mk("fe80::1/64"), mk("192.168.1.88/24")}
+	if !sharesV6Prefix(net.ParseIP("2600:382:aff8:486b:1111:2222:3333:4444"), addrs) {
+		t.Error("another device in the same /64 should count as the same network")
+	}
+	if sharesV6Prefix(net.ParseIP("2600:382:aff8:9999::1"), addrs) {
+		t.Error("a different /64 is a different network")
+	}
+	if sharesV6Prefix(net.ParseIP("fe80::2"), addrs) {
+		t.Error("link-local addresses must not count")
 	}
 }
