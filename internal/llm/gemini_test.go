@@ -3,12 +3,14 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGeminiSendsImagesAndKeyHeaderAndParsesReply(t *testing.T) {
@@ -50,8 +52,8 @@ func TestGeminiRateLimitIsFriendly(t *testing.T) {
 		http.Error(w, "quota", http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
-	_, err := Gemini{Key: "k", BaseURL: srv.URL}.Ask(context.Background(), "x", nil)
-	if err == nil || !strings.Contains(err.Error(), "quota") {
+	_, err := Gemini{Key: "k", BaseURL: srv.URL, Backoff: time.Millisecond}.Ask(context.Background(), "x", nil)
+	if err == nil || !strings.Contains(err.Error(), "quota") || !errors.Is(err, ErrBusy) {
 		t.Errorf("err = %v, want a quota message", err)
 	}
 }
@@ -101,4 +103,68 @@ func TestGeminiErrorsAreShortAndKeyFree(t *testing.T) {
 	if err == nil || len(err.Error()) > 220 || strings.Contains(err.Error(), "secret-key-123") {
 		t.Errorf("err = %v", err)
 	}
+}
+
+func TestGeminiOverloadRetriesThenSucceeds(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			http.Error(w, `{"error":{"code":503,"message":"This model is currently experiencing high demand."}}`, 503)
+			return
+		}
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"fine"}]}}]}`))
+	}))
+	defer srv.Close()
+	got, err := Gemini{Key: "k", Model: "m", BaseURL: srv.URL, Backoff: time.Millisecond}.Ask(context.Background(), "x", nil)
+	if err != nil || got != "fine" || calls != 3 {
+		t.Errorf("got %q err %v after %d calls", got, err, calls)
+	}
+}
+
+func TestGeminiOverloadFallsBackToLiteModel(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, ":generateContent"):
+			paths = append(paths, r.URL.Path)
+			if strings.Contains(r.URL.Path, "-lite:") {
+				w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"lite ok"}]}}]}`))
+				return
+			}
+			http.Error(w, `{"error":{"code":503,"message":"overloaded"}}`, 503)
+		default:
+			w.Write([]byte(`{"models":[{"name":"models/gemini-3.8-flash-lite","supportedGenerationMethods":["generateContent"]}]}`))
+		}
+	}))
+	defer srv.Close()
+	discMu.Lock()
+	discModel = ""
+	discMu.Unlock()
+	got, err := Gemini{Key: "k", BaseURL: srv.URL, Tries: 2, Backoff: time.Millisecond}.Ask(context.Background(), "x", nil)
+	if err != nil || got != "lite ok" {
+		t.Fatalf("got %q err %v (paths %v)", got, err, paths)
+	}
+}
+
+func TestBreakerFailsFastAfterFirstError(t *testing.T) {
+	calls := 0
+	b := NewBreaker(askerFunc(func(context.Context, string, []Image) (string, error) {
+		calls++
+		return "", errors.New("down")
+	}))
+	for i := 0; i < 4; i++ {
+		if _, err := b.Ask(context.Background(), "x", nil); err == nil {
+			t.Fatal("expected error")
+		}
+	}
+	if calls != 1 {
+		t.Errorf("inner asked %d times, want 1", calls)
+	}
+}
+
+type askerFunc func(context.Context, string, []Image) (string, error)
+
+func (f askerFunc) Ask(ctx context.Context, p string, im []Image) (string, error) {
+	return f(ctx, p, im)
 }

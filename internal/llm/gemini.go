@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,11 @@ type Gemini struct {
 	Model   string       // default DefaultGeminiModel; override with GEMINI_MODEL
 	BaseURL string       // default Google's endpoint; tests point it elsewhere
 	Client  *http.Client // default has a 2 minute timeout
+
+	// Retries for transient failures (overload, rate limit); default 3 tries
+	// with Backoff doubling between them (default 1s).
+	Tries   int
+	Backoff time.Duration
 }
 
 // DefaultGeminiModel is a fast, vision-capable model with a free tier. Model
@@ -70,22 +76,61 @@ func (g Gemini) Ask(ctx context.Context, prompt string, images []Image) (string,
 	if model == "" {
 		model = DefaultGeminiModel
 	}
-	out, status, err := g.generate(ctx, model, prompt, images)
+	out, status, err := g.generateRetrying(ctx, model, prompt, images)
 	if err == nil {
 		return out, nil
 	}
-	// A retired or unknown model name: find the newest flash model this key
-	// can use and try once more.
-	if status == http.StatusNotFound && g.Model == "" {
-		if found, derr := g.discover(ctx); derr == nil && found != "" && found != model {
+	if g.Model != "" {
+		return "", err // an explicitly chosen model: do not second-guess it
+	}
+	switch {
+	case status == http.StatusNotFound:
+		// A retired or unknown name: use the newest flash model this key can use.
+		if found, derr := g.discover(ctx, flashVersion); derr == nil && found != "" && found != model {
 			discMu.Lock()
 			discModel, discAt = found, time.Now()
 			discMu.Unlock()
-			out, _, err2 := g.generate(ctx, found, prompt, images)
+			out, _, err2 := g.generateRetrying(ctx, found, prompt, images)
 			return out, err2
+		}
+	case errors.Is(err, ErrBusy):
+		// Overloaded: a lighter model on separate capacity often still answers.
+		if lite, derr := g.discover(ctx, flashLiteVersion); derr == nil && lite != "" && lite != model {
+			out, _, err2 := g.generateRetrying(ctx, lite, prompt, images)
+			if err2 == nil {
+				return out, nil
+			}
 		}
 	}
 	return "", err
+}
+
+func transient(status int) bool {
+	return status == http.StatusTooManyRequests || status == http.StatusInternalServerError ||
+		status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
+}
+
+// generateRetrying retries transient failures with exponential backoff.
+func (g Gemini) generateRetrying(ctx context.Context, model, prompt string, images []Image) (string, int, error) {
+	tries, wait := g.Tries, g.Backoff
+	if tries <= 0 {
+		tries = 3
+	}
+	if wait <= 0 {
+		wait = time.Second
+	}
+	for i := 1; ; i++ {
+		out, status, err := g.generate(ctx, model, prompt, images)
+		if err == nil || !transient(status) || i >= tries {
+			return out, status, err
+		}
+		select {
+		case <-ctx.Done():
+			return "", status, ctx.Err()
+		case <-time.After(wait):
+		}
+		wait *= 2
+	}
 }
 
 func (g Gemini) base() string {
@@ -102,10 +147,13 @@ func (g Gemini) client() *http.Client {
 	return &http.Client{Timeout: 2 * time.Minute}
 }
 
-var flashVersion = regexp.MustCompile(`^models/gemini-(\d+(?:\.\d+)?)-flash$`)
+var (
+	flashVersion     = regexp.MustCompile(`^models/gemini-(\d+(?:\.\d+)?)-flash$`)
+	flashLiteVersion = regexp.MustCompile(`^models/gemini-(\d+(?:\.\d+)?)-flash-lite$`)
+)
 
-// discover returns the newest plain "flash" model that supports generateContent.
-func (g Gemini) discover(ctx context.Context) (string, error) {
+// discover returns the newest model matching pattern that supports generateContent.
+func (g Gemini) discover(ctx context.Context, pattern *regexp.Regexp) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.base()+"/v1beta/models?pageSize=200", nil)
 	if err != nil {
 		return "", err
@@ -131,7 +179,7 @@ func (g Gemini) discover(ctx context.Context) (string, error) {
 	}
 	best, bestV := "", -1.0
 	for _, m := range list.Models {
-		sub := flashVersion.FindStringSubmatch(m.Name)
+		sub := pattern.FindStringSubmatch(m.Name)
 		if sub == nil || !contains(m.Methods, "generateContent") {
 			continue
 		}
@@ -215,7 +263,9 @@ func (g Gemini) generate(ctx context.Context, model, prompt string, images []Ima
 func geminiError(status int, raw []byte) error {
 	switch status {
 	case http.StatusTooManyRequests:
-		return fmt.Errorf("gemini: rate limit or free-tier quota reached, try again later")
+		return fmt.Errorf("gemini: %w (rate limit or free-tier quota; try again shortly)", ErrBusy)
+	case http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusGatewayTimeout:
+		return fmt.Errorf("gemini: %w (Google's servers are overloaded)", ErrBusy)
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return fmt.Errorf("gemini: that API key was rejected")
 	}

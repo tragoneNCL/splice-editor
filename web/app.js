@@ -96,8 +96,9 @@
     const btn = $("aiConnect");
     btn.disabled = true; btn.textContent = "Checking…";
     try {
-      await api("/api/verify", { method: "POST", headers: { "X-AI-Provider": state.provider, "X-AI-Key": key } });
+      const r = await api("/api/verify", { method: "POST", headers: { "X-AI-Provider": state.provider, "X-AI-Key": key } });
       state.key = key; state.connected = true;
+      if (r && r.warning) toast(r.warning);
       store.set("splice.provider", state.provider); store.set("splice.key", key);
       $("aiKey").value = "";
       $("aiDialog").close();

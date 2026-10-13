@@ -676,3 +676,32 @@ func multipartBody(t *testing.T, fields map[string]string, files []file) (*bytes
 	mw.Close()
 	return &buf, mw.FormDataContentType()
 }
+
+// A provider that is down must never wedge a job: the edit finishes with the
+// automatic editor, quickly, and says so.
+func TestOverloadedAIFallsBackToAutomaticEditQuickly(t *testing.T) {
+	overloaded := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"code":503,"message":"This model is currently experiencing high demand."}}`, 503)
+	}))
+	defer overloaded.Close()
+	ts, _ := newTestServer(t, func(c *Config) {
+		c.AI = llm.Gemini{Key: "k", Model: "m", BaseURL: overloaded.URL, Tries: 2, Backoff: time.Millisecond}
+		c.AILabel = "gemini"
+	})
+	start := time.Now()
+	resp := upload(t, ts.URL, map[string]string{"duration": "5"}, []file{
+		{"clips", "a.mp4", clipBytes(t, synth.RedCircle, 3)},
+		{"clips", "b.mp4", clipBytes(t, synth.Landscape, 3)},
+	})
+	id := decode[map[string]string](t, resp)["id"]
+	v := waitDone(t, ts.URL, id)
+	if v.Status != "done" || v.Planner != "rule-based" {
+		t.Fatalf("job = %+v", v)
+	}
+	if len(v.Notes) == 0 || !strings.Contains(v.Notes[len(v.Notes)-1], "busy") {
+		t.Errorf("user should be told the AI was busy: %v", v.Notes)
+	}
+	if d := time.Since(start); d > 30*time.Second {
+		t.Errorf("fallback took %v; an overloaded AI must not stall the edit", d)
+	}
+}

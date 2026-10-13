@@ -316,6 +316,13 @@ func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	if _, err := ai.Ask(ctx, `Reply with exactly: {"ok":true}`, nil); err != nil {
+		if errors.Is(err, llm.ErrBusy) {
+			// The provider answered, so the key is real; it is just overloaded.
+			// Accept it, and say edits may fall back to automatic for now.
+			writeJSON(w, 200, map[string]any{"ok": true, "provider": label,
+				"warning": "Your key works, but the AI service is very busy right now. Edits will use the automatic editor until it frees up."})
+			return
+		}
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -544,7 +551,7 @@ func (s *Server) runJob(j *job, p params, ai llm.Asker, aiLabel string) {
 		Clips: p.clips, Prompt: p.prompt, Recipe: j.recipe,
 		Out: filepath.Join(j.dir, "out.mp4"), WorkDir: filepath.Join(j.dir, "work"),
 		Music: p.music, Duck: true, Title: p.title, Fade: 0.5,
-		Inspo: p.inspo, InspoURL: p.inspoURL, StyleAI: ai,
+		Inspo: p.inspo, InspoURL: p.inspoURL,
 		Progress: func(stage string, f float64) {
 			j.set(func(j *job) { j.stage, j.progress = stage, f })
 		},
@@ -553,11 +560,23 @@ func (s *Server) runJob(j *job, p params, ai llm.Asker, aiLabel string) {
 		s.failJob(j, "storage error")
 		return
 	}
+	var guarded *llm.Breaker
 	if ai != nil {
-		opts.Planners = []plan.Planner{plan.LLM{AI: ai, Label: aiLabel}}
-		opts.Vision = orient.Vision{AI: ai}
+		// One failure disables the AI for the rest of this job so it falls
+		// straight back to the automatic edit instead of re-waiting per step.
+		guarded = llm.NewBreaker(ai)
+		opts.Planners = []plan.Planner{plan.LLM{AI: guarded, Label: aiLabel}}
+		opts.Vision = orient.Vision{AI: guarded}
+		opts.StyleAI = guarded
 	}
 	res, err := pipeline.Run(ctx, opts)
+	if err == nil && guarded != nil && guarded.Err() != nil {
+		msg := "The AI couldn't be reached for this edit, so it used the automatic editor."
+		if errors.Is(guarded.Err(), llm.ErrBusy) {
+			msg = "The AI service was too busy for this edit, so it used the automatic editor. Try again in a few minutes."
+		}
+		res.Notes = append(res.Notes, msg)
+	}
 	if err != nil {
 		log.Printf("job %s failed: %v", j.id, err)
 		s.failJob(j, "could not edit these clips; try different footage")

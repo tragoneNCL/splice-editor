@@ -6,11 +6,13 @@ package llm
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,6 +22,10 @@ type Image struct {
 	Label string
 	Path  string
 }
+
+// ErrBusy marks a transient provider condition (overloaded, rate-limited).
+// The credentials worked; the provider just could not serve the request now.
+var ErrBusy = errors.New("the AI service is busy right now")
 
 // Asker sends a prompt (plus optional images) and returns the reply text.
 type Asker interface {
@@ -86,4 +92,41 @@ func JSONObject(reply string) (string, error) {
 		return "", fmt.Errorf("reply contained no JSON object")
 	}
 	return reply[start : end+1], nil
+}
+
+// Breaker wraps an Asker so that after one failure every later call fails
+// immediately with the same error. One job makes several model calls (look at
+// orientation, plan, describe style); without this, an overloaded provider
+// would make each of them wait out its own retries before the job falls back
+// to the automatic edit.
+type Breaker struct {
+	inner Asker
+	mu    sync.Mutex
+	err   error
+}
+
+func NewBreaker(a Asker) *Breaker { return &Breaker{inner: a} }
+
+// Err is the failure that tripped the breaker, or nil.
+func (b *Breaker) Err() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.err
+}
+
+func (b *Breaker) Ask(ctx context.Context, prompt string, images []Image) (string, error) {
+	b.mu.Lock()
+	if b.err != nil {
+		err := b.err
+		b.mu.Unlock()
+		return "", err
+	}
+	b.mu.Unlock()
+	out, err := b.inner.Ask(ctx, prompt, images)
+	if err != nil && ctx.Err() == nil {
+		b.mu.Lock()
+		b.err = err
+		b.mu.Unlock()
+	}
+	return out, err
 }
