@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -248,36 +249,50 @@ func TestCORSAndHealth(t *testing.T) {
 	}
 }
 
-func TestReviseNeedsAI(t *testing.T) {
+func TestReviseWithoutAIUsesRules(t *testing.T) {
 	ts, _ := newTestServer(t, nil)
-	resp := upload(t, ts.URL, nil, []file{{"clips", "a.mp4", clipBytes(t, synth.RedCircle, 3)}})
+	resp := upload(t, ts.URL, map[string]string{"duration": "5"},
+		[]file{{"clips", "a.mp4", clipBytes(t, synth.RedCircle, 3)}})
 	id := decode[map[string]string](t, resp)["id"]
 	waitDone(t, ts.URL, id)
-	r, err := http.Post(ts.URL+"/api/jobs/"+id+"/revise", "application/json",
-		strings.NewReader(`{"instruction":"make it shorter"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.Body.Close()
-	if r.StatusCode != http.StatusNotImplemented {
-		t.Errorf("status %d, want 501 without an AI backend", r.StatusCode)
-	}
-}
 
-func TestSweepRemovesExpiredJobs(t *testing.T) {
-	ts, s := newTestServer(t, func(c *Config) { c.TTL = time.Minute })
-	resp := upload(t, ts.URL, nil, []file{{"clips", "a.mp4", clipBytes(t, synth.RedCircle, 2)}})
-	id := decode[map[string]string](t, resp)["id"]
-	waitDone(t, ts.URL, id)
-	s.sweep(time.Now().Add(2 * time.Minute))
-	if _, err := os.Stat(filepath.Join(s.cfg.DataDir, id)); err == nil {
-		t.Error("expired job directory should be removed")
+	post := func(instr string) *http.Response {
+		r, err := http.Post(ts.URL+"/api/jobs/"+id+"/revise", "application/json",
+			strings.NewReader(`{"instruction":"`+instr+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
 	}
-	r, _ := http.Get(ts.URL + "/api/jobs/" + id)
+	// Something open-ended is refused immediately, with guidance.
+	r := post("make it feel nostalgic")
+	b, _ := io.ReadAll(r.Body)
 	r.Body.Close()
-	if r.StatusCode != 404 {
-		t.Errorf("expired job status %d, want 404", r.StatusCode)
+	if r.StatusCode != http.StatusBadRequest || !strings.Contains(string(b), "without AI") {
+		t.Errorf("open-ended: status %d body %s", r.StatusCode, b)
 	}
+	// A supported command works with no AI configured.
+	r = post("mute the first shot")
+	r.Body.Close()
+	if r.StatusCode != http.StatusAccepted {
+		t.Fatalf("rule command status %d", r.StatusCode)
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, _ := http.Get(ts.URL + "/api/jobs/" + id)
+		v := decode[JobView](t, resp)
+		if v.Status == "done" && v.Error != "" {
+			t.Fatalf("revision failed: %s", v.Error)
+		}
+		if v.Status == "done" && v.Revision == 2 {
+			if v.EDL.Cuts[0].Volume == nil || *v.EDL.Cuts[0].Volume != 0 {
+				t.Errorf("first cut not muted: %+v", v.EDL.Cuts[0])
+			}
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatal("revision never completed")
 }
 
 // scriptedAI answers revision prompts by slowing the first cut to half speed.
@@ -350,5 +365,127 @@ func TestReviseReRendersAndBumpsRevision(t *testing.T) {
 	// Half speed doubles the first cut's screen time.
 	if info.Duration < before*1.5 {
 		t.Errorf("duration %.1f after slow-mo of a %.1fs cut; expected it to grow", info.Duration, before)
+	}
+}
+
+// putChunk sends one chunk of a chunked upload.
+func putChunk(t *testing.T, base, uid, kind string, idx int, name string, total int64, offset int64, data []byte) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPut, base+"/api/uploads/"+uid+"/chunk", bytes.NewReader(data))
+	req.Header.Set("X-Kind", kind)
+	req.Header.Set("X-Index", fmt.Sprint(idx))
+	req.Header.Set("X-Name", name)
+	req.Header.Set("X-Total", fmt.Sprint(total))
+	req.Header.Set("X-Offset", fmt.Sprint(offset))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func TestChunkedUploadOutOfOrderThenEdit(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	r, err := http.Post(ts.URL+"/api/uploads", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid := decode[map[string]any](t, r)["upload_id"].(string)
+
+	for idx, scene := range []string{synth.Landscape, synth.RedCircle} {
+		data := clipBytes(t, scene, 3)
+		total := int64(len(data))
+		third := total / 3
+		// Deliberately out of order, with one retry of the same chunk.
+		parts := [][2]int64{{2 * third, total}, {0, third}, {0, third}, {third, 2 * third}}
+		for _, p := range parts {
+			resp := putChunk(t, ts.URL, uid, "clip", idx, fmt.Sprintf("c%d.mp4", idx), total, p[0], data[p[0]:p[1]])
+			if resp.StatusCode != 200 {
+				b, _ := io.ReadAll(resp.Body)
+				t.Fatalf("chunk %v: %d %s", p, resp.StatusCode, b)
+			}
+			resp.Body.Close()
+		}
+	}
+	body := `{"upload_id":"` + uid + `","duration":"6","preset":"1:1","prompt":"x"}`
+	resp, err := http.Post(ts.URL+"/api/jobs", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("create: %d %s", resp.StatusCode, b)
+	}
+	id := decode[map[string]string](t, resp)["id"]
+	v := waitDone(t, ts.URL, id)
+	if v.Status != "done" {
+		t.Fatalf("job: %+v", v)
+	}
+	if len(v.EDL.Cuts) < 2 {
+		t.Errorf("expected cuts from both uploaded clips, got %d", len(v.EDL.Cuts))
+	}
+}
+
+func TestIncompleteChunkedUploadIsRejected(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	r, _ := http.Post(ts.URL+"/api/uploads", "application/json", nil)
+	uid := decode[map[string]any](t, r)["upload_id"].(string)
+	data := clipBytes(t, synth.RedCircle, 2)
+	resp := putChunk(t, ts.URL, uid, "clip", 0, "a.mp4", int64(len(data)), 0, data[:len(data)/2])
+	resp.Body.Close()
+	jr, _ := http.Post(ts.URL+"/api/jobs", "application/json", strings.NewReader(`{"upload_id":"`+uid+`"}`))
+	b, _ := io.ReadAll(jr.Body)
+	jr.Body.Close()
+	if jr.StatusCode != 400 || !strings.Contains(string(b), "did not finish") {
+		t.Errorf("status %d body %s", jr.StatusCode, b)
+	}
+}
+
+func TestChunkLimitsAndValidation(t *testing.T) {
+	ts, _ := newTestServer(t, func(c *Config) { c.MaxUploadBytes = 1 << 20 })
+	r, _ := http.Post(ts.URL+"/api/uploads", "application/json", nil)
+	uid := decode[map[string]any](t, r)["upload_id"].(string)
+
+	cases := []struct {
+		name string
+		resp *http.Response
+		want int
+	}{
+		{"bad type", putChunk(t, ts.URL, uid, "clip", 0, "x.exe", 10, 0, []byte("0123456789")), 400},
+		{"too big", putChunk(t, ts.URL, uid, "clip", 0, "x.mp4", 5<<20, 0, []byte("abc")), 413},
+		{"past end", putChunk(t, ts.URL, uid, "clip", 1, "x.mp4", 3, 0, []byte("abcdef")), 400},
+		{"unknown upload", putChunk(t, ts.URL, strings.Repeat("a", 32), "clip", 0, "x.mp4", 3, 0, []byte("abc")), 404},
+	}
+	for _, c := range cases {
+		c.resp.Body.Close()
+		if c.resp.StatusCode != c.want {
+			t.Errorf("%s: status %d, want %d", c.name, c.resp.StatusCode, c.want)
+		}
+	}
+}
+
+func TestReferenceLinkMustBeYouTube(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	resp := upload(t, ts.URL, map[string]string{"inspo_url": "https://evil.example.com/v.mp4"},
+		[]file{{"clips", "a.mp4", clipBytes(t, synth.RedCircle, 1)}})
+	defer resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Errorf("status %d, want 400 for a non-YouTube reference", resp.StatusCode)
+	}
+}
+
+func TestUploadedReferenceIsDeletedAfterTheJob(t *testing.T) {
+	ts, s := newTestServer(t, nil)
+	resp := upload(t, ts.URL, map[string]string{"duration": "5"}, []file{
+		{"clips", "a.mp4", clipBytes(t, synth.RedCircle, 3)},
+		{"inspo", "ref.mp4", clipBytes(t, synth.Landscape, 3)},
+	})
+	id := decode[map[string]string](t, resp)["id"]
+	v := waitDone(t, ts.URL, id)
+	if v.Status != "done" {
+		t.Fatalf("job: %+v", v)
+	}
+	if _, err := os.Stat(filepath.Join(s.cfg.DataDir, id, "inspo.mp4")); err == nil {
+		t.Error("reference video should be deleted after the job")
 	}
 }

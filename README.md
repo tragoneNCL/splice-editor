@@ -6,6 +6,7 @@ Hands-off video editing. Drop in clips and a sentence; get back a finished edit.
 - **Picks the moments** — scene detection + quality scoring, then an AI planner chooses a strong opening and cuts to your brief.
 - **Real editing features** — speed, volume, transitions, titles/captions, music with ducking, zoom/crop, color, fades, export presets.
 - **Edit by sentence** — "make the second shot slow motion" revises the same project file and re-renders.
+- **Match a reference video** — paste a YouTube link (needs `yt-dlp`) or upload one; only its pacing is measured.
 - **Bring your own AI key** — Claude or Gemini (free tier). Keys stay in the visitor's browser and are never stored server-side.
 
 The edit decision list (EDL) is the project file: the AI writes it, the renderer plays it, and people or chat commands edit the same document.
@@ -49,7 +50,7 @@ The backend also serves the UI itself, so its own URL works standalone with no P
 | `ALLOWED_ORIGIN` | `*` | CORS origin; set to your Pages URL |
 | `GEMINI_API_KEY` | – | optional server-side key so visitors can skip bringing one |
 | `GEMINI_MODEL` / `ANTHROPIC_MODEL` | see code | model overrides |
-| `MAX_UPLOAD_MB`, `MAX_CLIPS`, `WORKERS`, `RATE_PER_HOUR`, `TTL_MINUTES` | 400, 12, 1, 6, 60 | limits |
+| `MAX_UPLOAD_MB`, `MAX_CLIPS`, `WORKERS`, `RATE_PER_HOUR`, `TTL_MINUTES` | 100000, 200, 1, 6, 60 | limits (uploads are chunked, parallel and resumable, so large files work behind proxies) |
 
 ## Layout
 

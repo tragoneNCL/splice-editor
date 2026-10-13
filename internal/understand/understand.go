@@ -56,11 +56,7 @@ func Analyze(path string) (ClipSummary, error) {
 	if err != nil {
 		return ClipSummary{}, err
 	}
-	cuts, err := sceneCuts(path)
-	if err != nil {
-		return ClipSummary{}, err
-	}
-	frames, err := frameStats(path)
+	cuts, frames, err := scan(path)
 	if err != nil {
 		return ClipSummary{}, err
 	}
@@ -73,33 +69,50 @@ func Analyze(path string) (ClipSummary, error) {
 
 var ptsTime = regexp.MustCompile(`pts_time:([0-9.]+)`)
 
-func sceneCuts(path string) ([]float64, error) {
-	out, err := exec.Command("ffmpeg", "-v", "info", "-i", path,
-		"-vf", fmt.Sprintf("select='gt(scene,%g)',showinfo", sceneThreshold),
-		"-an", "-f", "null", "-").CombinedOutput()
+// scan finds scene cuts and samples per-frame quality in ONE decode, on a
+// 320px-wide proxy: analysis does not need full resolution, and decoding plus
+// scaling is where nearly all the time goes on large footage.
+func scan(path string) ([]float64, []frameStat, error) {
+	meta, err := os.CreateTemp("", "scan-*.txt")
 	if err != nil {
-		return nil, fmt.Errorf("scene detect %s: %w\n%s", path, err, out)
+		return nil, nil, err
 	}
+	meta.Close()
+	defer os.Remove(meta.Name())
+
+	graph := fmt.Sprintf(
+		"[0:v:0]scale=320:-2:flags=fast_bilinear,split=2[a][b];"+
+			"[a]select='gt(scene,%g)+eq(n,0)',showinfo[s];"+
+			"[b]fps=%d,blurdetect,signalstats,metadata=print:file=%s[m]",
+		sceneThreshold, statsFPS, meta.Name())
+	out, err := exec.Command("ffmpeg", "-v", "info", "-i", path, "-an",
+		"-filter_complex", graph,
+		"-map", "[s]", "-f", "null", "-",
+		"-map", "[m]", "-f", "null", "-").CombinedOutput()
+	if err != nil {
+		return nil, nil, fmt.Errorf("analyse %s: %w\n%s", path, err, tail(out))
+	}
+
 	var cuts []float64
-	for _, m := range ptsTime.FindAllStringSubmatch(string(out), -1) {
-		if t, err := strconv.ParseFloat(m[1], 64); err == nil {
-			cuts = append(cuts, t)
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, "showinfo") {
+			continue
+		}
+		if m := ptsTime.FindStringSubmatch(line); m != nil {
+			if t, err := strconv.ParseFloat(m[1], 64); err == nil {
+				cuts = append(cuts, t)
+			}
 		}
 	}
 	sort.Float64s(cuts)
-	return cuts, nil
-}
 
-func frameStats(path string) ([]frameStat, error) {
-	out, err := exec.Command("ffmpeg", "-v", "error", "-i", path,
-		"-vf", fmt.Sprintf("fps=%d,blurdetect,signalstats,metadata=print:file=-", statsFPS),
-		"-an", "-f", "null", "-").CombinedOutput()
+	raw, err := os.ReadFile(meta.Name())
 	if err != nil {
-		return nil, fmt.Errorf("frame stats %s: %w\n%s", path, err, out)
+		return nil, nil, err
 	}
 	var frames []frameStat
 	var cur frameStat
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(string(raw), "\n") {
 		switch {
 		case strings.HasPrefix(line, "frame:"):
 			if m := ptsTime.FindStringSubmatch(line); m != nil {
@@ -113,7 +126,15 @@ func frameStats(path string) ([]frameStat, error) {
 			frames = append(frames, cur)
 		}
 	}
-	return frames, nil
+	return cuts, frames, nil
+}
+
+func tail(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	if len(s) > 600 {
+		s = s[len(s)-600:]
+	}
+	return s
 }
 
 func buildShots(duration float64, cuts []float64, frames []frameStat) []Shot {
@@ -176,6 +197,20 @@ func (c *ClipSummary) Thumbnails(dir string) error {
 			return fmt.Errorf("thumbnail %s: %w\n%s", c.Path, err, b)
 		}
 		c.Shots[i].Thumb = out
+	}
+	return nil
+}
+
+// Frame writes one upright, downscaled JPEG of the clip at time t.
+func Frame(path string, t float64, fix int, out string) error {
+	vf := "scale=384:-2"
+	if f := ingest.RotateFilter(fix); f != "" {
+		vf = f + "," + vf
+	}
+	b, err := exec.Command("ffmpeg", "-y", "-v", "error", "-ss", fmt.Sprintf("%.2f", t),
+		"-i", path, "-frames:v", "1", "-vf", vf, "-q:v", "3", out).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("frame %s: %w\n%s", path, err, b)
 	}
 	return nil
 }

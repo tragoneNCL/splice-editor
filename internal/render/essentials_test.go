@@ -310,3 +310,25 @@ func TestValidateRejectsBadValues(t *testing.T) {
 		}
 	}
 }
+
+// Muting every clip, or silent footage, used to crash the encoder: loudnorm
+// turns pure silence into NaN.
+func TestSilentProgrammeStillRendersWithLoudnorm(t *testing.T) {
+	dir := t.TempDir()
+	r := schema.Recipe{Canvas: schema.Canvas{Width: 320, Height: 180, FPS: 30}, Loudnorm: true}
+	zero := 0.0
+
+	withSound := clip(t, dir, "talk.mp4", synth.RedCircle, synth.Options{Seconds: 2, Sound: true})
+	muted := filepath.Join(dir, "muted.mp4")
+	mustRender(t, schema.EDL{Cuts: []schema.Cut{{Clip: withSound, Start: 0, End: 2, Volume: &zero}}}, r, muted)
+	if d := durationOf(t, muted); d < 1.5 {
+		t.Errorf("muted render duration %.2f", d)
+	}
+
+	silent := clip(t, dir, "timelapse.mp4", synth.GreenSquare, synth.Options{Seconds: 2})
+	out := filepath.Join(dir, "silent.mp4")
+	mustRender(t, schema.EDL{Cuts: []schema.Cut{{Clip: silent, Start: 0, End: 2}}}, r, out)
+	if d := durationOf(t, out); d < 1.5 {
+		t.Errorf("silent render duration %.2f", d)
+	}
+}

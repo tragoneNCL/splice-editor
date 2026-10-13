@@ -279,3 +279,18 @@ dialog .sub { font-size: 14px; margin-bottom: 18px; }
   border-radius: 14px; font-size: 14px; color: #ffe2b0; background: rgba(255, 179, 92, 0.1); border: 1px solid rgba(255, 179, 92, 0.35);
 }
 .banner b { color: #fff; }
+
+.tabs { margin-bottom: 16px; }
+.or { display: flex; align-items: center; gap: 12px; color: var(--faint); font-size: 12px; margin: 12px 0; text-transform: uppercase; letter-spacing: 0.1em; }
+.or::before, .or::after { content: ""; height: 1px; flex: 1; background: var(--border); }
+#refBlock .fine { margin: 10px 0 4px; }
+#refBlock em { font-style: normal; color: var(--muted); }
+input[type="url"] {
+  width: 100%; background: rgba(0, 0, 0, 0.28); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px; outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+}
+input[type="url"]:focus { border-color: var(--a1); box-shadow: 0 0 0 4px rgba(124, 92, 255, 0.18); }
+.speed { margin-top: 6px; min-height: 20px; color: var(--muted); font-family: var(--mono); font-size: 12.5px; }
+.notes { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 8px; }
+.notes:empty { display: none; }
+.notes li { font-size: 13px; color: #ffe2b0; background: rgba(255, 179, 92, 0.1); border: 1px solid rgba(255, 179, 92, 0.3); border-radius: 10px; padding: 8px 12px; }

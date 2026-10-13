@@ -187,9 +187,16 @@ func fixesOf(clips []understand.ClipSummary) map[string]int {
 func summarize(clips []understand.ClipSummary) (string, []llm.Image) {
 	var b strings.Builder
 	var images []llm.Image
-	for _, c := range clips {
+	keep := topShots(clips, maxPromptShots)
+	for ci, c := range clips {
+		if !keep[ci].any {
+			continue
+		}
 		fmt.Fprintf(&b, "clip %q duration=%.1fs %dx%d audio=%v\n", c.Path, c.Duration, c.Width, c.Height, c.HasAudio)
-		for _, s := range c.Shots {
+		for si, s := range c.Shots {
+			if !keep[ci].shots[si] {
+				continue
+			}
 			fmt.Fprintf(&b, "  shot %.2f-%.2f score=%.2f", s.Start, s.End, s.Score)
 			if s.Thumb != "" {
 				label := fmt.Sprintf("f%d", len(images))
@@ -200,4 +207,40 @@ func summarize(clips []understand.ClipSummary) (string, []llm.Image) {
 		}
 	}
 	return b.String(), images
+}
+
+// maxPromptShots bounds what the model is shown: with hours of footage there
+// can be thousands of shots, which would blow up cost and latency for no gain.
+// The strongest shots are kept; the rule-based planner still sees everything.
+const maxPromptShots = 60
+
+type kept struct {
+	any   bool
+	shots map[int]bool
+}
+
+func topShots(clips []understand.ClipSummary, limit int) []kept {
+	type ref struct {
+		ci, si int
+		score  float64
+	}
+	var all []ref
+	for ci, c := range clips {
+		for si, s := range c.Shots {
+			all = append(all, ref{ci, si, s.Score})
+		}
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].score > all[j].score })
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	out := make([]kept, len(clips))
+	for i := range out {
+		out[i].shots = map[int]bool{}
+	}
+	for _, r := range all {
+		out[r.ci].any = true
+		out[r.ci].shots[r.si] = true
+	}
+	return out
 }

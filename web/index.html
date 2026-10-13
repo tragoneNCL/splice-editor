@@ -20,7 +20,7 @@
       <span>Splice</span>
     </a>
     <button class="ai-pill" id="aiPill" type="button" aria-haspopup="dialog">
-      <span class="dot" id="aiDot"></span><span id="aiPillText">Connect AI</span>
+      <span class="dot" id="aiDot"></span><span id="aiPillText">AI: optional</span>
     </button>
   </header>
 
@@ -45,15 +45,34 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
               </div>
               <p class="drop-t">Drag &amp; drop videos here</p>
-              <p class="drop-s">or <u>browse</u> · MP4, MOV, WebM · phone footage is fine</p>
+              <p class="drop-s">or <u>browse</u> · MP4, MOV, WebM · phone footage is fine<span id="limitText"></span></p>
             </div>
             <ul class="clips" id="clipList" aria-live="polite"></ul>
           </div>
 
           <div class="card">
-            <div class="card-h"><span class="num">2</span><h2>The brief</h2></div>
+            <div class="card-h"><span class="num">2</span><h2>The vibe</h2></div>
+            <div class="seg two tabs" id="briefMode" role="radiogroup" aria-label="How to describe the vibe">
+              <button type="button" role="radio" aria-checked="true" data-v="describe"><b>Describe it</b><small>Write a sentence</small></button>
+              <button type="button" role="radio" aria-checked="false" data-v="reference"><b>Match a video</b><small>YouTube link or file</small></button>
+            </div>
+
+            <div id="refBlock" hidden>
+              <label class="field">
+                <span>YouTube link</span>
+                <input id="refUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://www.youtube.com/watch?v=…">
+              </label>
+              <div class="or"><span>or</span></div>
+              <label class="file" id="refLabel">
+                <input id="refFile" type="file" accept="video/*,.mp4,.mov,.m4v,.mkv,.webm" hidden>
+                <span id="refText">Upload a reference video…</span>
+                <button type="button" id="refClear" class="x" aria-label="Remove reference" hidden>×</button>
+              </label>
+              <p class="fine">Splice measures the reference's pacing and style, then edits <em>your</em> footage to feel like it. The reference itself is never used in your video and is deleted after it's measured.</p>
+            </div>
+
             <label class="field">
-              <span>What should this video feel like?</span>
+              <span id="promptLabel">What should this video feel like?</span>
               <textarea id="prompt" rows="3" maxlength="1000" placeholder="e.g. Fast-paced travel reel, open on the best view, keep it upbeat"></textarea>
             </label>
             <div class="chips" id="ideas" aria-label="Ideas">
@@ -136,6 +155,7 @@
           <div class="card">
             <div class="card-h"><h2>Your edit is ready</h2></div>
             <p class="sub" id="resultMeta"></p>
+            <ul class="notes" id="resultNotes"></ul>
             <div class="actions">
               <a class="btn primary" id="download" download="splice-edit.mp4">Download MP4</a>
               <button class="btn" id="again" type="button">New edit</button>
@@ -174,8 +194,8 @@
   <!-- ───────── AI CONNECT DIALOG ───────── -->
   <dialog id="aiDialog" aria-labelledby="aiTitle">
     <form method="dialog" class="dlg-x"><button aria-label="Close">×</button></form>
-    <h2 id="aiTitle">Connect your AI</h2>
-    <p class="sub">Splice uses an AI model to look at your footage and make the creative calls. Use your own key, so it runs on your account.</p>
+    <h2 id="aiTitle">Smarter edits with AI <span class="pill">optional</span></h2>
+    <p class="sub">Splice works without any AI. Connecting one lets it look at your footage, fix upside-down clips, and follow your brief more closely. It uses your own key, so it runs on your account.</p>
 
     <div class="seg two" id="provider" role="radiogroup" aria-label="AI provider">
       <button type="button" role="radio" aria-checked="true" data-v="claude"><b>Claude</b><small>Best quality · pay as you go</small></button>

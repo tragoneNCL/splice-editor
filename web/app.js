@@ -13,10 +13,12 @@
     clips: [],            // File[]
     music: null,          // File | null
     preset: "9:16",
+    briefMode: "describe", // "describe" | "reference"
+    ref: null,             // File | null (reference video)
     provider: store.get("splice.provider") || "claude",
     key: store.get("splice.key") || "",
     connected: false,
-    limits: { clips: 12, mb: 400 },
+    limits: { clips: 200, mb: 100000 },
     job: null,            // { id, revision }
     busy: false,
   };
@@ -62,13 +64,15 @@
     pill.classList.toggle("on", state.connected);
     $("aiPillText").textContent = state.connected
       ? (state.provider === "claude" ? "Claude connected" : "Gemini connected")
-      : "Connect AI";
+      : "AI: optional";
     $("aiForget").hidden = !state.connected;
     for (const b of $("provider").children) b.setAttribute("aria-checked", String(b.dataset.v === state.provider));
     $("keyHelp").innerHTML = KEY_HELP[state.provider];
     $("aiKey").placeholder = state.provider === "claude" ? "sk-ant-…" : "AIza…";
     updateGo();
-    $("reviseHint").textContent = state.connected ? "" : "Connect your AI (top right) to edit by sentence.";
+    $("reviseHint").textContent = state.connected
+      ? "AI is connected, so you can ask for anything."
+      : "Works without AI for common changes (speed, mute, remove, titles, zoom…). Connect AI for open-ended requests.";
   }
 
   async function connect() {
@@ -187,42 +191,117 @@
     $("ringPct").textContent = Math.round(f * 100) + "%";
   }
 
-  function upload(form) {
+  // ── chunked, parallel, resumable upload ──
+  const PARALLEL = 4;
+  const fmtRate = (bps) => (bps >= 1048576 ? (bps / 1048576).toFixed(1) + " MB/s" : Math.round(bps / 1024) + " KB/s");
+  const fmtETA = (s) => (!isFinite(s) ? "…" : s < 60 ? Math.ceil(s) + "s" : Math.ceil(s / 60) + " min");
+
+  function putChunk(url, headers, blob, onProgress) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", API + "/api/jobs");
-      for (const [k, v] of Object.entries(aiHeaders())) xhr.setRequestHeader(k, v);
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) setProgress((e.loaded / e.total) * 0.2);
-      };
+      xhr.open("PUT", url);
+      for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded); };
       xhr.onload = () => {
         let body = {};
         try { body = JSON.parse(xhr.responseText); } catch { /* ignore */ }
-        if (xhr.status >= 200 && xhr.status < 300) resolve(body);
-        else reject(new Error(body.error || `Upload failed (${xhr.status})`));
+        if (xhr.status >= 200 && xhr.status < 300) return resolve(body);
+        const err = new Error(body.error || `Upload failed (${xhr.status})`);
+        err.fatal = xhr.status >= 400 && xhr.status < 500 && xhr.status !== 408 && xhr.status !== 429;
+        reject(err);
       };
-      xhr.onerror = () => reject(new Error("Couldn't reach the editor. Check your connection and try again."));
-      xhr.send(form);
+      xhr.onerror = () => reject(new Error("Connection dropped"));
+      xhr.send(blob);
     });
+  }
+
+  // items: [{ file, kind: "clip"|"inspo"|"music", index }]
+  async function uploadAll(items) {
+    const sess = await api("/api/uploads", { method: "POST" });
+    const chunk = sess.chunk_bytes || 32 * 1048576;
+    const tasks = [];
+    for (const it of items) {
+      for (let off = 0; off < it.file.size; off += chunk) tasks.push({ it, off });
+    }
+    const total = items.reduce((a, it) => a + it.file.size, 0);
+    const inflight = new Map(); // task -> bytes sent for the chunk in flight
+    let done = 0;
+    const t0 = Date.now();
+    let lastUI = 0;
+
+    const report = () => {
+      const now = Date.now();
+      if (now - lastUI < 250) return;
+      lastUI = now;
+      let sent = done;
+      for (const v of inflight.values()) sent += v;
+      const rate = sent / Math.max(0.5, (now - t0) / 1000);
+      setProgress((sent / total) * 0.2);
+      $("workSub").textContent = `${fmtMB(sent)} of ${fmtMB(total)}`;
+      $("upSpeed").textContent = `${fmtRate(rate)} · about ${fmtETA((total - sent) / Math.max(1, rate))} left`;
+    };
+
+    let next = 0;
+    const worker = async () => {
+      while (next < tasks.length) {
+        const task = tasks[next++];
+        const { it, off } = task;
+        const blob = it.file.slice(off, Math.min(it.file.size, off + chunk));
+        const headers = {
+          "X-Kind": it.kind, "X-Index": String(it.index), "X-Name": it.file.name,
+          "X-Offset": String(off), "X-Total": String(it.file.size),
+        };
+        let attempt = 0;
+        for (;;) {
+          try {
+            inflight.set(task, 0);
+            await putChunk(`${API}/api/uploads/${sess.upload_id}/chunk`, headers, blob, (n) => { inflight.set(task, n); report(); });
+            inflight.delete(task);
+            done += blob.size;
+            report();
+            break;
+          } catch (e) {
+            inflight.delete(task);
+            if (e.fatal || ++attempt > 5) throw e;
+            await new Promise((r) => setTimeout(r, 600 * 2 ** attempt)); // back off, then resend this chunk
+          }
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PARALLEL, tasks.length) }, worker));
+    $("upSpeed").textContent = "";
+    return sess.upload_id;
   }
 
   async function start() {
     state.busy = true; updateGo();
-    const form = new FormData();
-    for (const f of state.clips) form.append("clips", f, f.name);
-    if (state.music) form.append("music", state.music, state.music.name);
-    form.append("prompt", $("prompt").value.trim());
-    form.append("title", $("title").value.trim());
-    form.append("preset", state.preset);
-    form.append("duration", $("duration").value);
+    const items = state.clips.map((file, index) => ({ file, kind: "clip", index }));
+    if (state.music) items.push({ file: state.music, kind: "music", index: 0 });
+    const useRef = state.briefMode === "reference";
+    if (useRef && state.ref) items.push({ file: state.ref, kind: "inspo", index: 0 });
+    const refUrl = useRef && !state.ref ? $("refUrl").value.trim() : "";
 
     show("viewWork");
     $("workTitle").textContent = "Uploading your footage";
-    $("workSub").textContent = `Sending ${fmtMB(state.clips.reduce((a, f) => a + f.size, 0))}…`;
+    $("workSub").textContent = `Sending ${fmtMB(items.reduce((a, it) => a + it.file.size, 0))}…`;
+    $("upSpeed").textContent = "";
     setStep("upload"); setProgress(0);
 
     try {
-      const { id } = await upload(form);
+      const uploadId = await uploadAll(items);
+      $("workTitle").textContent = "Starting your edit";
+      const { id } = await api("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...aiHeaders() },
+        body: JSON.stringify({
+          upload_id: uploadId,
+          prompt: $("prompt").value.trim(),
+          title: $("title").value.trim(),
+          preset: state.preset,
+          duration: $("duration").value,
+          inspo_url: refUrl,
+        }),
+      });
       state.job = { id, revision: 0 };
       await poll(id, 1);
       await showResult(id);
@@ -315,17 +394,19 @@
       `<span class="pill">${v.planner === "rule-based" ? "Automatic edit" : "Edited by " + esc(v.planner)}</span>` +
       (fixes ? `<span class="pill">${fixes} clip${fixes > 1 ? "s" : ""} rotated upright</span>` : "") +
       `<span class="pill">${esc(state.preset)}</span>`;
+    const notes = $("resultNotes");
+    notes.innerHTML = "";
+    for (const n of v.notes || []) {
+      const li = document.createElement("li");
+      li.textContent = n;
+      notes.appendChild(li);
+    }
     show("viewResult");
     $("player").focus({ preventScroll: true });
   }
 
   async function revise(instruction) {
     if (!state.job) return;
-    if (!state.connected) {
-      toast("Connect your AI first to edit by sentence.", "err");
-      $("aiDialog").showModal();
-      return;
-    }
     const input = $("reviseInput"), go = $("reviseGo");
     input.disabled = go.disabled = true;
     $("playerBusy").hidden = false;
@@ -395,6 +476,35 @@
 
     $("go").addEventListener("click", start);
 
+    // vibe: describe vs match a video
+    $("briefMode").addEventListener("click", (e) => {
+      const b = e.target.closest("button"); if (!b) return;
+      state.briefMode = b.dataset.v;
+      for (const x of $("briefMode").children) x.setAttribute("aria-checked", String(x === b));
+      const ref = state.briefMode === "reference";
+      $("refBlock").hidden = !ref;
+      $("ideas").hidden = ref;
+      $("promptLabel").textContent = ref ? "Anything to add? (optional)" : "What should this video feel like?";
+      $("prompt").placeholder = ref ? "e.g. but keep it a bit calmer" : "e.g. Fast-paced travel reel, open on the best view, keep it upbeat";
+    });
+    $("refFile").addEventListener("change", (e) => {
+      const f = e.target.files[0];
+      state.ref = f || null;
+      $("refText").textContent = f ? f.name : "Upload a reference video…";
+      $("refLabel").classList.toggle("has", !!f);
+      $("refClear").hidden = !f;
+      if (f) $("refUrl").value = "";
+    });
+    $("refClear").addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      state.ref = null; $("refFile").value = "";
+      $("refText").textContent = "Upload a reference video…";
+      $("refLabel").classList.remove("has"); $("refClear").hidden = true;
+    });
+    $("refUrl").addEventListener("input", () => {
+      if ($("refUrl").value.trim() && state.ref) $("refClear").click();
+    });
+
     // AI dialog
     $("aiPill").addEventListener("click", () => { $("aiErr").hidden = true; $("aiDialog").showModal(); });
     $("provider").addEventListener("click", (e) => {
@@ -424,7 +534,10 @@
     // limits from the backend
     api("/api/health").then((h) => {
       if (h.max_clips) state.limits.clips = h.max_clips;
-      if (h.max_upload_mb) state.limits.mb = h.max_upload_mb;
+      if (h.max_upload_mb) {
+        state.limits.mb = h.max_upload_mb;
+        $("limitText").textContent = ` · up to ${h.max_upload_mb.toLocaleString()} MB per edit`;
+      }
       if (h.server_ai && !state.key) { state.connected = true; state.provider = "claude"; }
       renderAI();
     }).catch(() => {

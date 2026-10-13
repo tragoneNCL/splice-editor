@@ -33,13 +33,14 @@ func BuildArgs(edl schema.EDL, r schema.Recipe, out, workDir string) ([]string, 
 		return nil, fmt.Errorf("invalid canvas %+v", c)
 	}
 	args := []string{"-y", "-v", "error"}
-	for _, cut := range edl.Cuts {
-		args = append(args, "-i", cut.Clip)
-	}
 	n := len(edl.Cuts)
 
 	var parts []string
 	durs := make([]float64, n)
+	// hasSignal is false when the whole programme would be digital silence
+	// (silent footage, or every clip muted, and no music). loudnorm turns
+	// pure silence into NaN and the encoder rejects it, so it is skipped then.
+	hasSignal := edl.Music != nil
 	for i, cut := range edl.Cuts {
 		info, err := ingest.Probe(cut.Clip)
 		if err != nil {
@@ -52,7 +53,11 @@ func BuildArgs(edl schema.EDL, r schema.Recipe, out, workDir string) ([]string, 
 		speed := cut.SpeedOrDefault()
 		durs[i] = (end - cut.Start) / speed
 
-		v := fmt.Sprintf("[%d:v]trim=start=%.3f:end=%.3f,setpts=(PTS-STARTPTS)/%.4f", i, cut.Start, end, speed)
+		// Seek on the input so ffmpeg jumps to the cut instead of decoding the
+		// whole clip from the start; PTS then begins at 0 for this input.
+		args = append(args, "-ss", fmt.Sprintf("%.3f", cut.Start), "-t", fmt.Sprintf("%.3f", end-cut.Start), "-i", cut.Clip)
+
+		v := fmt.Sprintf("[%d:v]setpts=(PTS-STARTPTS)/%.4f", i, speed)
 		if f := ingest.RotateFilter(edl.Fixes[cut.Clip]); f != "" {
 			v += "," + f
 		}
@@ -64,7 +69,7 @@ func BuildArgs(edl schema.EDL, r schema.Recipe, out, workDir string) ([]string, 
 		parts = append(parts, v)
 
 		if info.HasAudio {
-			a := fmt.Sprintf("[%d:a]atrim=start=%.3f:end=%.3f,asetpts=PTS-STARTPTS", i, cut.Start, end)
+			a := fmt.Sprintf("[%d:a]asetpts=PTS-STARTPTS", i)
 			for _, t := range atempoChain(speed) {
 				a += fmt.Sprintf(",atempo=%.4f", t)
 			}
@@ -74,6 +79,9 @@ func BuildArgs(edl schema.EDL, r schema.Recipe, out, workDir string) ([]string, 
 			}
 			if vol != 1 {
 				a += fmt.Sprintf(",volume=%.3f", vol)
+			}
+			if vol > 0 {
+				hasSignal = true
 			}
 			a += fmt.Sprintf(",aresample=48000,aformat=channel_layouts=stereo[a%d]", i)
 			parts = append(parts, a)
@@ -181,7 +189,7 @@ func BuildArgs(edl schema.EDL, r schema.Recipe, out, workDir string) ([]string, 
 		}
 		curA = "mix"
 	}
-	if r.Loudnorm {
+	if r.Loudnorm && hasSignal {
 		parts = append(parts, fmt.Sprintf("[%s]loudnorm=I=-16:TP=-1.5:LRA=11[ln]", curA))
 		curA = "ln"
 	}
@@ -194,7 +202,7 @@ func BuildArgs(edl schema.EDL, r schema.Recipe, out, workDir string) ([]string, 
 		"-filter_complex", strings.Join(parts, ";"),
 		"-map", "["+curV+"]", "-map", "["+curA+"]",
 		"-t", fmt.Sprintf("%.3f", length),
-		"-c:v", "libx264", "-crf", fmt.Sprint(crf), "-pix_fmt", "yuv420p",
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", fmt.Sprint(crf), "-pix_fmt", "yuv420p",
 		"-c:a", "aac", "-movflags", "+faststart", out)
 	return args, nil
 }

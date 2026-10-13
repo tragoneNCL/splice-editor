@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"filmeditor/internal/ingest"
+	"filmeditor/internal/inspo"
 	"filmeditor/internal/llm"
 	"filmeditor/internal/orient"
 	"filmeditor/internal/pipeline"
@@ -44,6 +45,7 @@ type Config struct {
 	AllowedOrigin  string        // CORS; "*" for any, or the Pages origin
 	RatePerHour    int           // new jobs per IP per hour
 	JobTimeout     time.Duration
+	MinFreeBytes   int64 // keep at least this much disk free
 
 	// AI is optional. Without it the rule-based planner is used and
 	// plain-language revisions are unavailable.
@@ -56,13 +58,16 @@ type Config struct {
 
 func (c *Config) defaults() {
 	if c.MaxUploadBytes == 0 {
-		c.MaxUploadBytes = 400 << 20
+		c.MaxUploadBytes = 100000 << 20 // 100,000 MB per edit
 	}
 	if c.MaxClips == 0 {
-		c.MaxClips = 12
+		c.MaxClips = 200
 	}
 	if c.MaxFootageSecs == 0 {
-		c.MaxFootageSecs = 15 * 60
+		c.MaxFootageSecs = 6 * 3600
+	}
+	if c.MinFreeBytes == 0 {
+		c.MinFreeBytes = 5 << 30
 	}
 	if c.Workers == 0 {
 		c.Workers = 1
@@ -80,7 +85,7 @@ func (c *Config) defaults() {
 		c.RatePerHour = 6
 	}
 	if c.JobTimeout == 0 {
-		c.JobTimeout = 20 * time.Minute
+		c.JobTimeout = 4 * time.Hour
 	}
 	if c.DataDir == "" {
 		c.DataDir = filepath.Join(os.TempDir(), "filmeditor-data")
@@ -91,9 +96,10 @@ type Server struct {
 	cfg   Config
 	queue chan func()
 
-	mu   sync.Mutex
-	jobs map[string]*job
-	hits map[string][]time.Time
+	mu      sync.Mutex
+	jobs    map[string]*job
+	hits    map[string][]time.Time
+	uploads map[string]*uploadSession
 }
 
 type job struct {
@@ -110,6 +116,7 @@ type job struct {
 	recipe   schema.Recipe
 	clips    []string
 	rev      int // bumps on each re-render so clients can bust caches
+	notes    []string
 }
 
 // JobView is the JSON a client sees.
@@ -121,6 +128,7 @@ type JobView struct {
 	Error    string      `json:"error,omitempty"`
 	Planner  string      `json:"planner,omitempty"`
 	Revision int         `json:"revision"`
+	Notes    []string    `json:"notes,omitempty"`
 	EDL      *schema.EDL `json:"edl,omitempty"`
 }
 
@@ -128,7 +136,7 @@ func (j *job) view() JobView {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return JobView{ID: j.id, Status: j.status, Stage: j.stage, Progress: j.progress,
-		Error: j.errMsg, Planner: j.planner, Revision: j.rev, EDL: j.edl}
+		Error: j.errMsg, Planner: j.planner, Revision: j.rev, Notes: j.notes, EDL: j.edl}
 }
 
 func (j *job) set(fn func(j *job)) {
@@ -144,7 +152,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{cfg: cfg, queue: make(chan func(), cfg.QueueSize),
-		jobs: map[string]*job{}, hits: map[string][]time.Time{}}
+		jobs: map[string]*job{}, hits: map[string][]time.Time{}, uploads: map[string]*uploadSession{}}
 	for i := 0; i < cfg.Workers; i++ {
 		go func() {
 			for {
@@ -165,6 +173,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("POST /api/verify", s.verify)
+	mux.HandleFunc("POST /api/uploads", s.createUpload)
+	mux.HandleFunc("PUT /api/uploads/{id}/chunk", s.uploadChunk)
 	mux.HandleFunc("POST /api/jobs", s.create)
 	mux.HandleFunc("GET /api/jobs/{id}", s.status)
 	mux.HandleFunc("GET /api/jobs/{id}/video", s.video)
@@ -179,8 +189,8 @@ func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Access-Control-Allow-Origin", s.cfg.AllowedOrigin)
-		h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		h.Set("Access-Control-Allow-Headers", "Content-Type, X-AI-Provider, X-AI-Key")
+		h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+		h.Set("Access-Control-Allow-Headers", "Content-Type, X-AI-Provider, X-AI-Key, X-Kind, X-Index, X-Name, X-Offset, X-Total")
 		h.Set("Vary", "Origin")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -294,6 +304,8 @@ type params struct {
 	title    string
 	music    string
 	clips    []string
+	inspo    string // reference video file
+	inspoURL string // YouTube link
 }
 
 func newID() string {
@@ -309,6 +321,10 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(s.queue) >= cap(s.queue) {
 		fail(w, http.StatusServiceUnavailable, "the editor is busy, try again in a few minutes")
+		return
+	}
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		s.createFromUpload(w, r)
 		return
 	}
 	ai, aiLabel, err := s.askerFor(r)
@@ -335,6 +351,11 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.launch(w, id, dir, p, ai, aiLabel)
+}
+
+// launch registers the job and queues it.
+func (s *Server) launch(w http.ResponseWriter, id, dir string, p params, ai llm.Asker, aiLabel string) {
 	canvas := schema.Presets[p.preset]
 	rec := schema.DefaultRecipe()
 	rec.Canvas, rec.TargetDuration = canvas, p.duration
@@ -390,6 +411,15 @@ func (s *Server) readUpload(r *http.Request, dir string) (params, error) {
 				return params{}, err
 			}
 			p.clips = append(p.clips, dst)
+		case "inspo":
+			if !allowedExt[ext] {
+				return params{}, fmt.Errorf("the reference must be a video file")
+			}
+			dst, err := savePart(part, filepath.Join(dir, "inspo"+ext))
+			if err != nil {
+				return params{}, err
+			}
+			p.inspo = dst
 		case "music":
 			if !allowedAudio[ext] {
 				return params{}, fmt.Errorf("music must be mp3, m4a, aac, wav or ogg")
@@ -426,6 +456,12 @@ func (p *params) setField(name, val string) error {
 			return fmt.Errorf("unknown preset %q", val)
 		}
 		p.preset = val
+	case "inspo_url":
+		u, err := inspo.ValidateYouTubeURL(val)
+		if err != nil {
+			return err
+		}
+		p.inspoURL = u
 	case "duration":
 		d, err := strconv.ParseFloat(val, 64)
 		if err != nil || d < 5 || d > 120 {
@@ -452,6 +488,11 @@ func (s *Server) runJob(j *job, p params, ai llm.Asker, aiLabel string) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.JobTimeout)
 	defer cancel()
 	j.set(func(j *job) { j.status, j.stage = "running", "Starting" })
+	// A reference video is only measured, never kept: remove it as soon as
+	// the job ends, whatever the outcome.
+	if p.inspo != "" {
+		defer os.Remove(p.inspo)
+	}
 
 	// Reject files that are not video and cap total footage.
 	var total float64
@@ -473,6 +514,7 @@ func (s *Server) runJob(j *job, p params, ai llm.Asker, aiLabel string) {
 		Clips: p.clips, Prompt: p.prompt, Recipe: j.recipe,
 		Out: filepath.Join(j.dir, "out.mp4"), WorkDir: filepath.Join(j.dir, "work"),
 		Music: p.music, Duck: true, Title: p.title, Fade: 0.5,
+		Inspo: p.inspo, InspoURL: p.inspoURL, StyleAI: ai,
 		Progress: func(stage string, f float64) {
 			j.set(func(j *job) { j.stage, j.progress = stage, f })
 		},
@@ -493,7 +535,7 @@ func (s *Server) runJob(j *job, p params, ai llm.Asker, aiLabel string) {
 	}
 	j.set(func(j *job) {
 		j.status, j.stage, j.progress = "done", "Done", 1
-		j.planner, j.edl, j.rev = res.Planner, &res.EDL, 1
+		j.planner, j.edl, j.rev, j.notes = res.Planner, &res.EDL, 1, res.Notes
 	})
 }
 
@@ -559,16 +601,22 @@ func (s *Server) reviseJob(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if ai == nil {
-		fail(w, http.StatusNotImplemented, "plain-language edits need an AI connection: add your API key first")
-		return
-	}
 	var body struct {
 		Instruction string `json:"instruction"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body); err != nil || strings.TrimSpace(body.Instruction) == "" || len(body.Instruction) > 500 {
 		fail(w, http.StatusBadRequest, "send {\"instruction\": \"...\"} (max 500 characters)")
 		return
+	}
+	if ai == nil {
+		// No AI: common commands still work through the deterministic rules.
+		// Say right away if this one is not among them.
+		if cur := j.view().EDL; cur != nil {
+			if _, _, err := revise.Rules(*cur, body.Instruction); err != nil {
+				fail(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
 	}
 	var base *schema.EDL
 	var busy bool
@@ -588,7 +636,13 @@ func (s *Server) reviseJob(w http.ResponseWriter, r *http.Request) {
 	task := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.JobTimeout)
 		defer cancel()
-		next, err := revise.Apply(ctx, ai, *base, body.Instruction)
+		var next schema.EDL
+		var err error
+		if ai != nil {
+			next, err = revise.Apply(ctx, ai, *base, body.Instruction)
+		} else {
+			next, _, err = revise.Rules(*base, body.Instruction)
+		}
 		if err == nil {
 			err = renderRevision(j, next, base)
 		}
@@ -663,4 +717,16 @@ func (s *Server) sweep(now time.Time) {
 	for _, id := range expired {
 		s.drop(id)
 	}
+	// Abandoned chunked uploads.
+	var stale []string
+	s.mu.Lock()
+	for id, u := range s.uploads {
+		if now.Sub(u.created) > 12*time.Hour {
+			stale = append(stale, id)
+			delete(s.uploads, id)
+			os.RemoveAll(u.dir)
+		}
+	}
+	s.mu.Unlock()
+	_ = stale
 }

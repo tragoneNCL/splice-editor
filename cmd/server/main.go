@@ -7,7 +7,7 @@
 //	ALLOWED_ORIGIN  CORS origin, e.g. https://yourname.github.io (default *)
 //	GEMINI_API_KEY  enables the AI planner and orientation check
 //	GEMINI_MODEL    override the Gemini model name
-//	MAX_UPLOAD_MB, MAX_CLIPS, WORKERS, RATE_PER_HOUR, TTL_MINUTES  limits
+//	MAX_UPLOAD_MB (default 100000), MAX_CLIPS (200), WORKERS, RATE_PER_HOUR, TTL_MINUTES  limits
 package main
 
 import (
@@ -38,8 +38,8 @@ func main() {
 	cfg := server.Config{
 		DataDir:        os.Getenv("DATA_DIR"),
 		AllowedOrigin:  os.Getenv("ALLOWED_ORIGIN"),
-		MaxUploadBytes: int64(envInt("MAX_UPLOAD_MB", 400)) << 20,
-		MaxClips:       envInt("MAX_CLIPS", 12),
+		MaxUploadBytes: int64(envInt("MAX_UPLOAD_MB", 100000)) << 20,
+		MaxClips:       envInt("MAX_CLIPS", 200),
 		Workers:        envInt("WORKERS", 1),
 		RatePerHour:    envInt("RATE_PER_HOUR", 6),
 		TTL:            time.Duration(envInt("TTL_MINUTES", 60)) * time.Minute,
