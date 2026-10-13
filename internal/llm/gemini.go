@@ -10,7 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,7 +29,7 @@ type Gemini struct {
 
 // DefaultGeminiModel is a fast, vision-capable model with a free tier. Model
 // names change over time, so it is overridable via GEMINI_MODEL.
-const DefaultGeminiModel = "gemini-2.5-flash"
+const DefaultGeminiModel = "gemini-3.8-flash"
 
 // NewGeminiFromEnv returns nil when GEMINI_API_KEY is not set.
 func NewGeminiFromEnv() *Gemini {
@@ -47,25 +50,118 @@ type gInlineData struct {
 	Data     string `json:"data"`
 }
 
+// discovered caches a working model found via ListModels, so a retired
+// default heals itself instead of breaking every request.
+var (
+	discMu    sync.Mutex
+	discModel string
+	discAt    time.Time
+)
+
 func (g Gemini) Ask(ctx context.Context, prompt string, images []Image) (string, error) {
 	model := g.Model
 	if model == "" {
+		discMu.Lock()
+		if discModel != "" && time.Since(discAt) < time.Hour {
+			model = discModel
+		}
+		discMu.Unlock()
+	}
+	if model == "" {
 		model = DefaultGeminiModel
 	}
-	base := g.BaseURL
-	if base == "" {
-		base = "https://generativelanguage.googleapis.com"
+	out, status, err := g.generate(ctx, model, prompt, images)
+	if err == nil {
+		return out, nil
 	}
-	client := g.Client
-	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Minute}
+	// A retired or unknown model name: find the newest flash model this key
+	// can use and try once more.
+	if status == http.StatusNotFound && g.Model == "" {
+		if found, derr := g.discover(ctx); derr == nil && found != "" && found != model {
+			discMu.Lock()
+			discModel, discAt = found, time.Now()
+			discMu.Unlock()
+			out, _, err2 := g.generate(ctx, found, prompt, images)
+			return out, err2
+		}
 	}
+	return "", err
+}
 
+func (g Gemini) base() string {
+	if g.BaseURL != "" {
+		return strings.TrimRight(g.BaseURL, "/")
+	}
+	return "https://generativelanguage.googleapis.com"
+}
+
+func (g Gemini) client() *http.Client {
+	if g.Client != nil {
+		return g.Client
+	}
+	return &http.Client{Timeout: 2 * time.Minute}
+}
+
+var flashVersion = regexp.MustCompile(`^models/gemini-(\d+(?:\.\d+)?)-flash$`)
+
+// discover returns the newest plain "flash" model that supports generateContent.
+func (g Gemini) discover(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.base()+"/v1beta/models?pageSize=200", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("x-goog-api-key", g.Key)
+	resp, err := g.client().Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("list models: http %d", resp.StatusCode)
+	}
+	var list struct {
+		Models []struct {
+			Name    string   `json:"name"`
+			Methods []string `json:"supportedGenerationMethods"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return "", err
+	}
+	best, bestV := "", -1.0
+	for _, m := range list.Models {
+		sub := flashVersion.FindStringSubmatch(m.Name)
+		if sub == nil || !contains(m.Methods, "generateContent") {
+			continue
+		}
+		if v, err := strconv.ParseFloat(sub[1], 64); err == nil && v > bestV {
+			best, bestV = strings.TrimPrefix(m.Name, "models/"), v
+		}
+	}
+	if best == "" {
+		return "", fmt.Errorf("no usable Gemini flash model found for this key")
+	}
+	return best, nil
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// generate makes one generateContent call. It returns the HTTP status so the
+// caller can decide whether discovery is worth trying.
+func (g Gemini) generate(ctx context.Context, model, prompt string, images []Image) (string, int, error) {
 	parts := []gPart{{Text: prompt}}
 	for _, im := range images {
 		raw, err := os.ReadFile(im.Path)
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 		parts = append(parts,
 			gPart{Text: "Image " + im.Label + ":"},
@@ -76,24 +172,21 @@ func (g Gemini) Ask(ctx context.Context, prompt string, images []Image) (string,
 		"generationConfig": map[string]any{"responseMimeType": "application/json", "temperature": 0.3},
 	})
 
-	endpoint := fmt.Sprintf("%s/v1beta/models/%s:generateContent", strings.TrimRight(base, "/"), url.PathEscape(model))
+	endpoint := fmt.Sprintf("%s/v1beta/models/%s:generateContent", g.base(), url.PathEscape(model))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", g.Key) // header, not query string, so it never lands in logs
-	resp, err := client.Do(req)
+	resp, err := g.client().Do(req)
 	if err != nil {
-		return "", fmt.Errorf("gemini: %w", err)
+		return "", 0, fmt.Errorf("gemini: could not reach Google (%v)", err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusTooManyRequests {
-			return "", fmt.Errorf("gemini: rate limit or free-tier quota reached, try again later")
-		}
-		return "", fmt.Errorf("gemini: http %d: %s", resp.StatusCode, truncate(string(raw), 300))
+		return "", resp.StatusCode, geminiError(resp.StatusCode, raw)
 	}
 	var out struct {
 		Candidates []struct {
@@ -105,16 +198,43 @@ func (g Gemini) Ask(ctx context.Context, prompt string, images []Image) (string,
 		} `json:"candidates"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", fmt.Errorf("gemini: bad response: %w", err)
+		return "", resp.StatusCode, fmt.Errorf("gemini: bad response: %w", err)
 	}
 	if len(out.Candidates) == 0 {
-		return "", fmt.Errorf("gemini: no candidates in response")
+		return "", resp.StatusCode, fmt.Errorf("gemini: no candidates in response")
 	}
 	var text strings.Builder
 	for _, p := range out.Candidates[0].Content.Parts {
 		text.WriteString(p.Text)
 	}
-	return text.String(), nil
+	return text.String(), resp.StatusCode, nil
+}
+
+// geminiError turns an API failure into one short sentence safe to show a
+// visitor (Google's JSON body can be long and technical).
+func geminiError(status int, raw []byte) error {
+	switch status {
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("gemini: rate limit or free-tier quota reached, try again later")
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("gemini: that API key was rejected")
+	}
+	var e struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	msg := ""
+	if json.Unmarshal(raw, &e) == nil {
+		msg = strings.TrimSpace(e.Error.Message)
+	}
+	if i := strings.IndexAny(msg, ".\n"); i > 0 {
+		msg = msg[:i]
+	}
+	if msg == "" {
+		msg = "request failed"
+	}
+	return fmt.Errorf("gemini: %s (http %d)", truncate(msg, 160), status)
 }
 
 func truncate(s string, n int) string {

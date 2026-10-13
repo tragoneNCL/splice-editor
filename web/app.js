@@ -220,6 +220,7 @@
         try { body = JSON.parse(xhr.responseText); } catch { /* ignore */ }
         if (xhr.status >= 200 && xhr.status < 300) return resolve(body);
         const err = new Error(body.error || `Upload failed (${xhr.status})`);
+        err.status = xhr.status;
         err.fatal = xhr.status >= 400 && xhr.status < 500 && xhr.status !== 408 && xhr.status !== 429;
         reject(err);
       };
@@ -239,20 +240,33 @@
     const total = items.reduce((a, it) => a + it.file.size, 0);
     const inflight = new Map(); // task -> bytes sent for the chunk in flight
     let done = 0;
+    let retrying = 0;
     const t0 = Date.now();
-    let lastUI = 0;
 
-    const report = () => {
-      const now = Date.now();
-      if (now - lastUI < 250) return;
-      lastUI = now;
+    const render = () => {
       let sent = done;
       for (const v of inflight.values()) sent += v;
-      const rate = sent / Math.max(0.5, (now - t0) / 1000);
-      setProgress((sent / total) * 0.2);
+      const secs = Math.max(1, (Date.now() - t0) / 1000);
+      const rate = sent / secs;
+      setProgress(sent / total); // the ring is the upload itself while uploading
       $("workSub").textContent = `${fmtMB(sent)} of ${fmtMB(total)}`;
-      $("upSpeed").textContent = `${fmtRate(rate)} · about ${fmtETA((total - sent) / Math.max(1, rate))} left`;
+      let line = "";
+      if (retrying > 0) {
+        line = "Connection hiccup, retrying…";
+      } else if (sent === 0) {
+        line = secs < 8 ? "Connecting…" : "Still waiting for the connection to start moving data…";
+      } else {
+        const eta = (total - sent) / Math.max(1, rate);
+        line = `${fmtRate(rate)} · about ${fmtETA(eta)} left`;
+        if (secs > 6 && eta > 20 * 60) {
+          line += ` — that's a long upload for this connection. Fewer or shorter clips will be much faster.`;
+        }
+      }
+      $("upSpeed").textContent = line;
     };
+    const tick = setInterval(render, 500);
+    const report = () => {};
+    render();
 
     let next = 0;
     const worker = async () => {
@@ -276,13 +290,20 @@
             break;
           } catch (e) {
             inflight.delete(task);
+            if (e.status === 404) throw new Error("The editor restarted while you were uploading. Please press Create my edit again.");
             if (e.fatal || ++attempt > 5) throw e;
+            retrying++;
             await new Promise((r) => setTimeout(r, 600 * 2 ** attempt)); // back off, then resend this chunk
+            retrying--;
           }
         }
       }
     };
-    await Promise.all(Array.from({ length: Math.min(PARALLEL, tasks.length) }, worker));
+    try {
+      await Promise.all(Array.from({ length: Math.min(PARALLEL, tasks.length) }, worker));
+    } finally {
+      clearInterval(tick);
+    }
     $("upSpeed").textContent = "";
     return sess.upload_id;
   }
@@ -354,7 +375,7 @@
     if (hit) setStep(hit[1]);
     $("workTitle").textContent = v.stage || "Working";
     $("workSub").textContent = v.status === "queued" ? "Waiting in line…" : "Hang tight, this usually takes a minute or two.";
-    setProgress(0.2 + (v.progress || 0) * 0.8);
+    setProgress(v.progress || 0);
   }
 
   // ───────── result ─────────
