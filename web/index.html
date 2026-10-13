@@ -235,8 +235,38 @@
 
           <div class="card" id="timelineCard" hidden>
             <div class="card-h"><h2>Timeline</h2><span class="meta" id="tlMeta"></span></div>
-            <div class="timeline" id="timeline" aria-label="Cuts in order"></div>
+            <p class="fine tl-hint" id="tlHint">Click a shot to edit it. Drag shots to reorder.</p>
+            <div class="timeline editable" id="timeline" aria-label="Cuts in order"></div>
+            <div class="tl-tools" id="tlTools" hidden>
+              <button class="btn small" id="tlLeft" type="button" title="Move earlier">← Earlier</button>
+              <button class="btn small" id="tlRight" type="button" title="Move later">Later →</button>
+              <button class="btn small" id="tlSplit" type="button" title="Split at the playhead (or the middle)">Split</button>
+              <button class="btn small danger" id="tlDelete" type="button" title="Delete this shot">Delete</button>
+            </div>
+            <div class="inspector" id="inspector" hidden>
+              <div class="insp-grid">
+                <label class="field"><span>Start (s)</span><input id="inStart" type="number" step="0.1" min="0"></label>
+                <label class="field"><span>End (s)</span><input id="inEnd" type="number" step="0.1" min="0"></label>
+                <label class="field"><span class="row"><span>Speed</span><output id="inSpeedOut">1×</output></span>
+                  <input id="inSpeed" type="range" min="0.25" max="4" step="0.25" value="1"></label>
+                <label class="field"><span class="row"><span>Volume</span><output id="inVolumeOut">100%</output></span>
+                  <input id="inVolume" type="range" min="0" max="200" step="10" value="100"></label>
+                <label class="field"><span class="row"><span>Zoom</span><output id="inZoomOut">1×</output></span>
+                  <input id="inZoom" type="range" min="1" max="3" step="0.1" value="1"></label>
+                <label class="field"><span>Transition in</span>
+                  <select id="inTransition"><option value="">Cut</option><option value="dissolve">Dissolve</option><option value="fade">Through black</option></select></label>
+              </div>
+              <label class="field"><span>Caption</span><input id="inCaption" type="text" maxlength="120" placeholder="Shown over this shot"></label>
+              <label class="check"><input id="inGray" type="checkbox"> Black &amp; white</label>
+            </div>
             <ul class="legend" id="legend"></ul>
+            <div class="pending" id="pendingBar" hidden>
+              <span id="pendingText">Unsaved changes</span>
+              <span class="pending-actions">
+                <button class="btn" id="pendingDiscard" type="button">Discard</button>
+                <button class="btn primary" id="pendingApply" type="button">Apply changes</button>
+              </span>
+            </div>
           </div>
         </div>
       </div>

@@ -436,3 +436,30 @@ main > .card { margin-bottom: 20px; }
 .foot a { color: var(--muted); }
 .foot .link { display: inline; font-size: inherit; color: var(--muted); text-decoration: underline; }
 .install-pill { border-color: rgba(124, 92, 255, 0.55); background: rgba(124, 92, 255, 0.12); }
+
+/* ═════════ editable timeline ═════════ */
+.timeline.editable { height: 58px; gap: 4px; padding: 4px; overflow-x: auto; background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border); border-radius: 14px; }
+.timeline.editable .seg-cut {
+  min-width: 36px; display: flex; align-items: flex-end; padding: 4px 6px; font-size: 10.5px; font-weight: 700; color: rgba(0, 0, 0, 0.75);
+  cursor: pointer; user-select: none; border: 2px solid transparent; overflow: hidden; white-space: nowrap;
+}
+.timeline.editable .seg-cut.sel { border-color: #fff; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.18); }
+.timeline.editable .seg-cut.dragover { outline: 2px dashed #fff; outline-offset: 2px; }
+.timeline.editable .seg-cut.dragging { opacity: 0.45; }
+.tl-hint { margin: -4px 0 10px; text-align: left; }
+.tl-tools { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.btn.small { padding: 7px 12px; font-size: 13px; border-radius: 10px; }
+.btn.danger { color: #ffc4cb; border-color: rgba(255, 107, 122, 0.45); }
+.inspector { margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: rgba(0, 0, 0, 0.2); }
+.insp-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; margin-bottom: 12px; }
+.insp-grid .field { margin-top: 0; }
+.inspector .field input[type="number"], .inspector select, .inspector input[type="text"] {
+  width: 100%; background: rgba(0, 0, 0, 0.28); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; outline: none; color: var(--text);
+}
+.inspector select { appearance: none; }
+.check { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 14px; color: var(--muted); }
+.pending {
+  position: sticky; bottom: 12px; margin-top: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px; border-radius: 14px; background: #1c1730; border: 1px solid rgba(124, 92, 255, 0.6); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.pending-actions { display: flex; gap: 8px; }

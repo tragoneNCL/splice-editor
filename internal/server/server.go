@@ -253,6 +253,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{id}/video", s.video)
 	mux.HandleFunc("POST /api/projects/{id}/revise", s.reviseJob)
 	mux.HandleFunc("POST /api/projects/{id}/undo", s.undo)
+	mux.HandleFunc("POST /api/projects/{id}/edit", s.editProject)
 	mux.HandleFunc("PUT /api/uploads/{id}/chunk", s.uploadChunk)
 	mux.HandleFunc("POST /api/jobs", s.create)
 	mux.HandleFunc("GET /api/jobs/{id}", s.status)

@@ -54,6 +54,7 @@ let projectStatus = "draft";
 let projectMedia = [];
 let projectRev = 0;
 let polls = 0;
+const edits = [];
 const settings = { preset: "9:16", duration: 30 };
 
 async function fakeFetch(url, opts = {}) {
@@ -91,6 +92,13 @@ async function fakeFetch(url, opts = {}) {
     if (b.media) projectMedia = b.media.map((id) => ({ id, name: id + ".mp4", duration: 10, size: 1e6, kind: "clip" }));
     if (b.settings) Object.assign(settings, b.settings);
     return json(project());
+  }
+  if (u.endsWith("/edit") && method === "POST") {
+    const b = body();
+    if (!b.ops || !b.ops.length) return json({ error: "no changes" }, 400);
+    projectRev++;
+    edits.push(b.ops);
+    return json({ id: "p".repeat(32) }, 202);
   }
   if (u.endsWith("/generate")) { projectStatus = "queued"; return json({ id: "p".repeat(32) }, 202); }
   if (u.endsWith("/api/uploads") && method === "POST") return json({ upload_id: "u".repeat(32), chunk_bytes: 4 * 1048576 }, 201);
@@ -186,6 +194,22 @@ getEl("prompt").value = "calm";
 getEl("go").click();
 await until(() => !getEl("timelineCard").hidden, "timeline after generation");
 
+// 7. timeline: select the first shot, slow it down, delete another, apply once
+const tl = getEl("timeline");
+await until(() => tl.children.length === 2, "two shots on the timeline");
+tl.children[0].click();
+await until(() => !getEl("inspector").hidden, "inspector after selecting a shot");
+getEl("inSpeed").value = "0.5";
+for (const f of getEl("inSpeed").__listeners.change || []) f({});
+getEl("tlRight").click();                                  // move shot 1 later
+await until(() => !getEl("pendingBar").hidden, "pending changes bar");
+if (!/2 unsaved changes/.test(getEl("pendingText").textContent)) failures.push("pending text: " + getEl("pendingText").textContent);
+getEl("pendingApply").click();
+await until(() => edits.length === 1, "the batched edit request");
+if (edits[0] && (edits[0].length !== 2 || edits[0][0].op !== "set" || edits[0][1].op !== "move")) {
+  failures.push("unexpected ops: " + JSON.stringify(edits[0]));
+}
+
 const chunkPuts = requests.filter((r) => r.startsWith("PUT") && r.includes("/chunk"));
 if (chunkPuts.length !== 5) failures.push(`expected 5 chunk uploads (3+2), saw ${chunkPuts.length}`);
 if (!requests.some((r) => r.endsWith("/commit"))) failures.push("never committed the upload to the library");
@@ -198,5 +222,5 @@ if (failures.length) {
   console.error("UI SMOKE TEST FAILED:\n - " + failures.join("\n - "));
   process.exit(1);
 }
-console.log("ui smoke ok: sign-in, project, " + chunkPuts.length + " chunks, commit, generate, timeline");
+console.log("ui smoke ok: sign-in, project, " + chunkPuts.length + " chunks, commit, generate, timeline edit");
 process.exit(0);

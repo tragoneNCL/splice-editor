@@ -193,3 +193,33 @@ func (p *Project) Duration() float64 {
 	}
 	return total
 }
+
+// RemoveText deletes the title at index i.
+func (p *Project) RemoveText(i int) error {
+	return p.apply(func(e *schema.EDL) error {
+		if i < 0 || i >= len(e.Texts) {
+			return fmt.Errorf("no title %d (have %d)", i, len(e.Texts))
+		}
+		e.Texts = append(e.Texts[:i], e.Texts[i+1:]...)
+		return nil
+	})
+}
+
+// SetFades sets the programme fade in/out (nil leaves a value unchanged).
+func (p *Project) SetFades(in, out *float64) error {
+	return p.apply(func(e *schema.EDL) error {
+		if in != nil {
+			if *in < 0 || *in > 10 {
+				return fmt.Errorf("fade in must be between 0 and 10 seconds")
+			}
+			e.FadeIn = *in
+		}
+		if out != nil {
+			if *out < 0 || *out > 10 {
+				return fmt.Errorf("fade out must be between 0 and 10 seconds")
+			}
+			e.FadeOut = *out
+		}
+		return nil
+	})
+}

@@ -38,6 +38,10 @@
     localUrls: null,
     p: null,            // current project (ProjectView)
     briefMode: "describe",
+    draft: { cuts: [] },
+    ops: [],
+    sel: null,
+    dragFrom: null,
     settingsTimer: null,
     uploading: false,
     generating: false,
@@ -452,6 +456,7 @@
     try { p = await api("/api/projects/" + id); }
     catch (e) { toast(e.status === 404 ? "That project doesn't exist." : e.message, "err"); go("#/home"); return; }
     state.p = p;
+    state.draft = { cuts: [] }; state.ops = []; state.sel = null; state.draftKey = "";
     fillProject();
     if (p.status === "queued" || p.status === "running") startPolling();
   }
@@ -618,7 +623,8 @@
       $("download").href = url;
       $("download").setAttribute("download", (p.name || "splice-edit").replace(/[^\w\- ]+/g, "") + ".mp4");
       $("undoBtn").disabled = !p.can_undo;
-      renderTimeline(p.edl);
+      const key = p.id + ":" + p.revision;
+      if (state.draftKey !== key) { state.draftKey = key; loadDraft(p.edl); }
       const fixes = p.edl && p.edl.fixes ? Object.keys(p.edl.fixes).length : 0;
       $("resultMeta").innerHTML =
         `<span class="pill">${p.planner === "rule-based" ? "Automatic edit" : "Edited by " + esc(p.planner)}</span>` +
@@ -645,25 +651,55 @@
   }
 
   const PALETTE = ["#7c5cff", "#ff5c93", "#ffb35c", "#3ddc97", "#4cc3ff", "#c46bff", "#ff7a59", "#8bd450"];
-  function renderTimeline(edl) {
-    const cuts = (edl && edl.cuts) || [];
-    const durs = cuts.map((c) => Math.max(0.1, (c.end - c.start) / (c.speed > 0 ? c.speed : 1)));
+
+  // ── interactive timeline ──
+  // `state.draft` is the edit being worked on; `state.ops` are the changes not
+  // yet sent. The server applies the same operations and re-renders once.
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  const cutLen = (c) => Math.max(0.05, (c.end - c.start) / (c.speed > 0 ? c.speed : 1));
+
+  function loadDraft(edl) {
+    state.draft = edl ? clone(edl) : { cuts: [] };
+    state.ops = [];
+    if (state.sel == null || state.sel >= state.draft.cuts.length) state.sel = null;
+    renderTimeline();
+  }
+
+  function fileLabel(c) {
+    const file = c.clip.split("/").pop().replace(/\.[^.]+$/, "");
+    const m = (state.p.media || []).find((x) => x.id === file);
+    return m ? m.name.replace(/\.[^.]+$/, "") : file;
+  }
+
+  function renderTimeline() {
+    const cuts = state.draft.cuts;
+    const durs = cuts.map(cutLen);
     const total = durs.reduce((a, b) => a + b, 0) || 1;
     const names = [];
-    const byFile = new Map();
-    for (const m of (state.p.media || [])) byFile.set(m.id, m.name);
     const tl = $("timeline");
     tl.innerHTML = "";
     cuts.forEach((c, i) => {
-      const file = c.clip.split("/").pop().replace(/\.[^.]+$/, "");
-      const label = byFile.get(file) || file;
+      const label = fileLabel(c);
       let ci = names.indexOf(label);
       if (ci < 0) { names.push(label); ci = names.length - 1; }
       const el = document.createElement("div");
-      el.className = "seg-cut" + (c.caption ? " has-cap" : "") + ((c.speed && c.speed !== 1) || c.zoom > 1 || c.transition ? " has-fx" : "");
+      el.className = "seg-cut" + (c.caption ? " has-cap" : "") + ((c.speed && c.speed !== 1) || c.zoom > 1 || c.transition ? " has-fx" : "") + (state.sel === i ? " sel" : "");
       el.style.flex = String(durs[i] / total);
       el.style.background = PALETTE[ci % PALETTE.length];
+      el.draggable = true;
+      el.textContent = `${i + 1}`;
       el.title = `${i + 1}. ${label}  ${durs[i].toFixed(1)}s` + (c.speed && c.speed !== 1 ? `  ${c.speed}×` : "") + (c.caption ? `\n“${c.caption}”` : "");
+      el.addEventListener("click", () => selectCut(i));
+      el.addEventListener("dragstart", (e) => { state.dragFrom = i; el.classList.add("dragging"); if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(i)); } });
+      el.addEventListener("dragend", () => el.classList.remove("dragging"));
+      el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("dragover"); });
+      el.addEventListener("dragleave", () => el.classList.remove("dragover"));
+      el.addEventListener("drop", (e) => {
+        e.preventDefault();
+        el.classList.remove("dragover");
+        if (state.dragFrom != null && state.dragFrom !== i) doMove(state.dragFrom, i);
+        state.dragFrom = null;
+      });
       tl.appendChild(el);
     });
     const lg = $("legend");
@@ -674,6 +710,155 @@
       lg.appendChild(li);
     });
     $("tlMeta").textContent = `${cuts.length} cuts · ${fmtDur(total)}`;
+    renderInspector();
+    renderPending();
+  }
+
+  function renderPending() {
+    const n = state.ops.length;
+    $("pendingBar").hidden = n === 0;
+    $("pendingText").textContent = `${n} unsaved change${n === 1 ? "" : "s"}`;
+  }
+
+  function selectCut(i) {
+    state.sel = state.sel === i ? null : i;
+    renderTimeline();
+    // Jump the preview to this shot when nothing has been changed yet.
+    if (state.sel != null && state.ops.length === 0) {
+      let t = 0;
+      for (let k = 0; k < state.sel; k++) t += cutLen(state.draft.cuts[k]);
+      try { $("player").currentTime = t; } catch { /* no video loaded */ }
+    }
+  }
+
+  function renderInspector() {
+    const i = state.sel;
+    const c = i != null ? state.draft.cuts[i] : null;
+    $("inspector").hidden = !c;
+    $("tlTools").hidden = !c;
+    if (!c) return;
+    $("inStart").value = c.start.toFixed(2);
+    $("inEnd").value = c.end.toFixed(2);
+    const speed = c.speed > 0 ? c.speed : 1;
+    $("inSpeed").value = String(speed); $("inSpeedOut").textContent = speed + "×";
+    const vol = c.volume == null ? 1 : c.volume;
+    $("inVolume").value = String(Math.round(vol * 100)); $("inVolumeOut").textContent = Math.round(vol * 100) + "%";
+    const zoom = c.zoom > 1 ? c.zoom : 1;
+    $("inZoom").value = String(zoom); $("inZoomOut").textContent = zoom + "×";
+    $("inTransition").value = c.transition || "";
+    $("inCaption").value = c.caption || "";
+    $("inGray").checked = !!(c.color && c.color.grayscale);
+    $("tlLeft").disabled = i === 0;
+    $("tlRight").disabled = i === state.draft.cuts.length - 1;
+    $("tlDelete").disabled = state.draft.cuts.length <= 1;
+  }
+
+  // Each helper updates the draft and records the same operation for the server.
+  function doSet(fields) {
+    const i = state.sel;
+    if (i == null) return;
+    const c = state.draft.cuts[i];
+    if ("speed" in fields) c.speed = fields.speed === 1 ? 0 : fields.speed;
+    if ("volume" in fields) { if (fields.volume === 1) delete c.volume; else c.volume = fields.volume; }
+    if ("zoom" in fields) c.zoom = fields.zoom === 1 ? 0 : fields.zoom;
+    if ("caption" in fields) c.caption = fields.caption;
+    if ("transition" in fields) c.transition = fields.transition;
+    if ("grayscale" in fields) { c.color = c.color || {}; c.color.grayscale = fields.grayscale; }
+    state.ops.push({ op: "set", i, ...fields });
+    renderTimeline();
+  }
+
+  function doTrim(start, end) {
+    const i = state.sel;
+    if (i == null) return;
+    const c = state.draft.cuts[i];
+    if (!(end > start + 0.1)) { toast("The end must be after the start.", "err"); renderInspector(); return; }
+    const src = (state.p.media || []).find((m) => c.clip.includes(m.id));
+    if (src && src.duration && end > src.duration + 0.05) { toast(`That clip is only ${src.duration.toFixed(1)}s long.`, "err"); renderInspector(); return; }
+    c.start = start; c.end = end;
+    state.ops.push({ op: "trim", i, start, end });
+    renderTimeline();
+  }
+
+  function doMove(from, to) {
+    const cuts = state.draft.cuts;
+    const [c] = cuts.splice(from, 1);
+    cuts.splice(to, 0, c);
+    state.ops.push({ op: "move", from, to });
+    state.sel = to;
+    renderTimeline();
+  }
+
+  function doDelete() {
+    const i = state.sel;
+    if (i == null || state.draft.cuts.length <= 1) return;
+    state.draft.cuts.splice(i, 1);
+    state.ops.push({ op: "delete", i });
+    state.sel = Math.min(i, state.draft.cuts.length - 1);
+    renderTimeline();
+  }
+
+  function doSplit() {
+    const i = state.sel;
+    if (i == null) return;
+    const c = state.draft.cuts[i];
+    let at = c.start + (c.end - c.start) / 2;
+    if (state.ops.length === 0) { // the playhead is only meaningful for the rendered version
+      let t0 = 0;
+      for (let k = 0; k < i; k++) t0 += cutLen(state.draft.cuts[k]);
+      const t = $("player").currentTime || 0;
+      const sp = c.speed > 0 ? c.speed : 1;
+      if (t > t0 + 0.2 && t < t0 + cutLen(c) - 0.2) at = c.start + (t - t0) * sp;
+    }
+    at = Math.round(at * 100) / 100;
+    if (!(at > c.start + 0.1 && at < c.end - 0.1)) { toast("That shot is too short to split.", "err"); return; }
+    const second = { ...clone(c), start: at, caption: "", transition: "" };
+    c.end = at;
+    state.draft.cuts.splice(i + 1, 0, second);
+    state.ops.push({ op: "split", i, at });
+    state.sel = i + 1;
+    renderTimeline();
+  }
+
+  async function applyPending() {
+    if (!state.ops.length || !state.p) return;
+    const ops = state.ops;
+    const want = state.p.revision + 1;
+    $("pendingApply").disabled = true;
+    $("playerBusy").hidden = false;
+    $("busyText").textContent = "Applying your edits…";
+    try {
+      await api(`/api/projects/${state.p.id}/edit`, { method: "POST", body: { ops } });
+      await waitRevision(want);
+      toast("Edits applied.", "ok");
+    } catch (e) {
+      toast(e.message, "err");
+      loadDraft(state.p.edl); // back to what the server has
+    } finally {
+      $("pendingApply").disabled = false;
+      $("playerBusy").hidden = true;
+    }
+  }
+
+  function bindTimeline() {
+    $("tlLeft").addEventListener("click", () => { if (state.sel > 0) doMove(state.sel, state.sel - 1); });
+    $("tlRight").addEventListener("click", () => { if (state.sel < state.draft.cuts.length - 1) doMove(state.sel, state.sel + 1); });
+    $("tlSplit").addEventListener("click", doSplit);
+    $("tlDelete").addEventListener("click", doDelete);
+    const num = (id) => parseFloat($(id).value);
+    $("inStart").addEventListener("change", () => doTrim(num("inStart"), num("inEnd")));
+    $("inEnd").addEventListener("change", () => doTrim(num("inStart"), num("inEnd")));
+    $("inSpeed").addEventListener("input", () => { $("inSpeedOut").textContent = $("inSpeed").value + "×"; });
+    $("inSpeed").addEventListener("change", () => doSet({ speed: num("inSpeed") }));
+    $("inVolume").addEventListener("input", () => { $("inVolumeOut").textContent = $("inVolume").value + "%"; });
+    $("inVolume").addEventListener("change", () => doSet({ volume: num("inVolume") / 100 }));
+    $("inZoom").addEventListener("input", () => { $("inZoomOut").textContent = $("inZoom").value + "×"; });
+    $("inZoom").addEventListener("change", () => doSet({ zoom: num("inZoom") }));
+    $("inTransition").addEventListener("change", () => doSet({ transition: $("inTransition").value }));
+    $("inCaption").addEventListener("change", () => doSet({ caption: $("inCaption").value.trim() }));
+    $("inGray").addEventListener("change", () => doSet({ grayscale: $("inGray").checked }));
+    $("pendingApply").addEventListener("click", applyPending);
+    $("pendingDiscard").addEventListener("click", () => loadDraft(state.p.edl));
   }
 
   function updateGo() {
@@ -889,6 +1074,7 @@
   }
 
   function bind() {
+    bindTimeline();
     // auth
     $("authTabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setAuthMode(b.dataset.v); });
     $("authForm").addEventListener("submit", submitAuth);
