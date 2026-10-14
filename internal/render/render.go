@@ -99,8 +99,10 @@ func BuildArgs(edl schema.EDL, r schema.Recipe, out, workDir string) ([]string, 
 		cut := edl.Cuts[i]
 		nv, na := fmt.Sprintf("cv%d", i), fmt.Sprintf("ca%d", i)
 		if cut.Transition == "" {
+			// concat leaves the video on a microsecond timebase, which xfade
+			// refuses to mix with the 1/fps streams; put it back on the frame grid.
 			parts = append(parts,
-				fmt.Sprintf("[%s][v%d]concat=n=2:v=1:a=0[%s]", curV, i, nv),
+				fmt.Sprintf("[%s][v%d]concat=n=2:v=1:a=0,fps=%d[%s]", curV, i, c.FPS, nv),
 				fmt.Sprintf("[%s][a%d]concat=n=2:v=0:a=1[%s]", curA, i, na))
 			starts[i] = length
 			length += durs[i]

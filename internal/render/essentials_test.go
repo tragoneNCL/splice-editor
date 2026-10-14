@@ -332,3 +332,25 @@ func TestSilentProgrammeStillRendersWithLoudnorm(t *testing.T) {
 		t.Errorf("silent render duration %.2f", d)
 	}
 }
+
+// Real edits mix hard cuts and dissolves. A dissolve that follows a hard cut
+// used to fail: concat leaves the stream on a different timebase than xfade expects.
+func TestHardCutThenDissolveThenHardCut(t *testing.T) {
+	dir := t.TempDir()
+	a := clip(t, dir, "a.mp4", synth.RedCircle, synth.Options{Seconds: 3, Sound: true})
+	b := clip(t, dir, "b.mp4", synth.GreenSquare, synth.Options{Seconds: 3})
+	c := clip(t, dir, "c.mp4", synth.Landscape, synth.Options{Seconds: 3, Sound: true})
+	out := filepath.Join(dir, "mix.mp4")
+	edl := schema.EDL{Cuts: []schema.Cut{
+		{Clip: a, Start: 0, End: 2},
+		{Clip: b, Start: 0, End: 2},                                          // hard cut
+		{Clip: c, Start: 0, End: 2, Transition: "dissolve", TransitionDur: 0.5}, // dissolve after a hard cut
+		{Clip: a, Start: 0, End: 1.5},                                        // hard cut after a dissolve
+		{Clip: b, Start: 0, End: 1.5, Transition: "dissolve", TransitionDur: 0.4},
+	}}
+	mustRender(t, edl, canvas640, out)
+	want := 2 + 2 + 2 - 0.5 + 1.5 + 1.5 - 0.4
+	if d := durationOf(t, out); !near(d, want, 0.3) {
+		t.Errorf("duration %.2f, want ~%.1f", d, want)
+	}
+}

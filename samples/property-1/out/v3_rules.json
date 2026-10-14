@@ -13,17 +13,21 @@
     {
       "clip": "samples/property-1/raw/01_hallway.mp4",
       "start": 0,
-      "end": 4
+      "end": 4,
+      "transition": "dissolve",
+      "transition_dur": 0.4
     },
     {
       "clip": "samples/property-1/raw/02_other.mp4",
       "start": 0,
-      "end": 4.97
+      "end": 4.97,
+      "transition": "dissolve",
+      "transition_dur": 0.4
     },
     {
       "clip": "samples/property-1/raw/04_kitchen.mp4",
       "start": 0,
-      "end": 4.71
+      "end": 5
     },
     {
       "clip": "samples/property-1/raw/05_entry.mp4",
