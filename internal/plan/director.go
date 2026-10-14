@@ -262,9 +262,16 @@ func (d Director) build(in Input) (schema.EDL, error) {
 	// 5. Transitions decided before timing, so the overlap can be paid back.
 	trans := make([]string, n)
 	var overlap float64
+	var motions []float64
+	for _, c := range all {
+		motions = append(motions, c.shot.Motion)
+	}
+	// "Slow enough to dissolve" is relative to this footage: a gimbal walkthrough
+	// moves everywhere, and the calmer half of it is still the calm half.
+	slow := math.Max(14, median(motions)*1.15)
 	for i := 1; i < n; i++ {
 		prev, cur := ordered[i-1].c, ordered[i].c
-		if useDissolve(d.Style.Transitions, prev, cur) {
+		if useDissolve(d.Style.Transitions, prev, cur, slow) {
 			trans[i] = "dissolve"
 			overlap += dissolveSeconds
 		}
@@ -338,7 +345,7 @@ func pickHook(cs []*cand, wantRoom string) int {
 	return best
 }
 
-func useDissolve(mode string, prev, cur *cand) bool {
+func useDissolve(mode string, prev, cur *cand, slow float64) bool {
 	switch mode {
 	case "hard":
 		return false
@@ -353,7 +360,7 @@ func useDissolve(mode string, prev, cur *cand) bool {
 	if prev.room == cur.room && prev.room != "other" { // "other" means unknown, not "same"
 		return false
 	}
-	return prev.shot.Motion < 18 && cur.shot.Motion < 18
+	return prev.shot.Motion <= slow && cur.shot.Motion <= slow
 }
 
 // pacing returns a duration per cut summing to total. The shape: a slightly
