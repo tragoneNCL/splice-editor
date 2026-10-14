@@ -142,9 +142,9 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			c, err := understand.Analyze(p)
 			if err == nil {
 				c.Fix = fixes[p]
-				if o.Vision != nil {
-					err = c.Thumbnails(filepath.Join(o.WorkDir, "frames"))
-				}
+				// Frames are always extracted: they feed repeat detection even
+				// when no AI is connected.
+				err = c.Thumbnails(filepath.Join(o.WorkDir, "frames"))
 			}
 			clips[i], errs[i] = c, err
 			mu.Lock()
@@ -161,8 +161,19 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		}
 	}
 
+	understand.Cluster(clips, 10) // find shots that show the same thing
+
 	o.report("Planning the edit", 0.55)
-	edl, used, err := plan.Run(ctx, plan.Input{Prompt: prompt, Recipe: recipe, Clips: clips}, o.Planners...)
+	planners := append([]plan.Planner(nil), o.Planners...)
+	if o.StyleAI != nil {
+		// The AI describes the footage and reads the brief; the director,
+		// which cannot choose dead footage, does the cutting.
+		labels, style, err := plan.LabelShots(ctx, o.StyleAI, prompt, clips)
+		if err == nil {
+			planners = append([]plan.Planner{plan.Director{Labels: labels, Style: style}}, planners...)
+		}
+	}
+	edl, used, err := plan.Run(ctx, plan.Input{Prompt: prompt, Recipe: recipe, Clips: clips}, planners...)
 	if err != nil {
 		return Result{}, err
 	}

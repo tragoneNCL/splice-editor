@@ -4,6 +4,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"filmeditor/internal/synth"
 )
 
 func TestAnalyzeFindsSceneCut(t *testing.T) {
@@ -31,5 +33,55 @@ func TestAnalyzeFindsSceneCut(t *testing.T) {
 		if s.Score <= 0 || s.Score > 1 {
 			t.Errorf("score %.3f out of range", s.Score)
 		}
+	}
+}
+
+// A clip that opens on (or ends with) bare wall must not offer that footage,
+// as long as the clip has real detail somewhere else.
+func TestBlankStretchesAreRemovedButPlainClipsAreKept(t *testing.T) {
+	dir := t.TempDir()
+	rich := filepath.Join(dir, "rich.mp4")
+	if err := synth.WriteClip(rich, synth.Landscape, synth.Options{Seconds: 2, Texture: true}); err != nil {
+		t.Fatal(err)
+	}
+	wall := filepath.Join(dir, "wall.mp4")
+	if err := synth.WriteClip(wall, synth.Wall, synth.Options{Seconds: 3}); err != nil {
+		t.Fatal(err)
+	}
+	mixed := filepath.Join(dir, "mixed.mp4")
+	if err := synth.Concat(mixed, wall, rich); err != nil { // 3s of bare wall, then 2s of detail
+		t.Fatal(err)
+	}
+
+	c, err := Analyze(mixed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var usable, first float64 = 0, -1
+	for _, s := range c.Shots {
+		usable += s.Length()
+		if first < 0 || s.Start < first {
+			first = s.Start
+		}
+	}
+	if usable < 1.0 || usable > 2.6 {
+		t.Errorf("usable = %.1fs, want only the ~2s of detailed footage: %+v", usable, c.Shots)
+	}
+	if first < 2.5 {
+		t.Errorf("first usable moment at %.1fs, but the first 3s are a bare wall", first)
+	}
+
+	// The same bare footage on its own is kept: nothing in it has detail, so
+	// nothing is "dead" relative to the rest.
+	plain, err := Analyze(wall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept float64
+	for _, s := range plain.Shots {
+		kept += s.Length()
+	}
+	if kept < 2.5 {
+		t.Errorf("a uniformly plain clip must be kept whole, kept %.1fs of 3s", kept)
 	}
 }

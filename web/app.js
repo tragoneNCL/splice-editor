@@ -627,7 +627,7 @@
       if (state.draftKey !== key) { state.draftKey = key; loadDraft(p.edl); }
       const fixes = p.edl && p.edl.fixes ? Object.keys(p.edl.fixes).length : 0;
       $("resultMeta").innerHTML =
-        `<span class="pill">${p.planner === "rule-based" ? "Automatic edit" : "Edited by " + esc(p.planner)}</span>` +
+        `<span class="pill">${p.planner === "ai-director" ? "AI director" : (p.planner === "rule-based" || p.planner === "director") ? "Automatic edit" : "Edited by " + esc(p.planner)}</span>` +
         (fixes ? `<span class="pill">${fixes} clip${fixes > 1 ? "s" : ""} rotated upright</span>` : "") +
         `<span class="pill">${esc((p.settings || {}).preset || "")}</span><span class="pill">v${p.revision}</span>`;
     } else {

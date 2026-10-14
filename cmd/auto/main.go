@@ -19,7 +19,6 @@ import (
 	"filmeditor/internal/llm"
 	"filmeditor/internal/orient"
 	"filmeditor/internal/pipeline"
-	"filmeditor/internal/plan"
 	"filmeditor/internal/schema"
 )
 
@@ -64,7 +63,6 @@ func main() {
 	}
 
 	var ai llm.Asker
-	label := ""
 	switch *which {
 	case "rule":
 	case "gemini":
@@ -72,14 +70,14 @@ func main() {
 		if g == nil {
 			fatal(fmt.Errorf("GEMINI_API_KEY is not set"))
 		}
-		ai, label = *g, "gemini"
+		ai = *g
 	case "claude":
-		ai, label = llm.CLI{}, "claude-cli"
+		ai = llm.CLI{}
 	default: // auto
 		if g := llm.NewGeminiFromEnv(); g != nil {
-			ai, label = *g, "gemini"
+			ai = *g
 		} else {
-			ai, label = llm.CLI{}, "claude-cli"
+			ai = llm.CLI{}
 		}
 	}
 
@@ -89,8 +87,8 @@ func main() {
 		Progress: func(stage string, f float64) { fmt.Printf("[%3.0f%%] %s\n", f*100, stage) },
 	}
 	if ai != nil {
-		opts.Planners = []plan.Planner{plan.LLM{AI: ai, Label: label}}
 		opts.Vision = orient.Vision{AI: ai}
+		opts.StyleAI = ai
 	}
 	res, err := pipeline.Run(context.Background(), opts)
 	if err != nil {

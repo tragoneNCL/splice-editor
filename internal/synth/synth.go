@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Scene names. Each is visually unambiguous to a person or a vision model.
@@ -20,9 +21,10 @@ const (
 	RedCircle   = "red_circle"   // one big red circle on a white background
 	GreenSquare = "green_square" // one big green square on a black background
 	Night       = "night"        // dark sky, white moon, small white stars
+	Wall        = "wall"         // a plain, featureless wall: dead footage
 )
 
-var Scenes = []string{Landscape, RedCircle, GreenSquare, Night}
+var Scenes = []string{Landscape, RedCircle, GreenSquare, Night, Wall}
 
 // Image renders a scene at w x h.
 func Image(scene string, w, h int) image.Image {
@@ -58,6 +60,8 @@ func Image(scene string, w, h int) image.Image {
 		for i := 0; i < 25; i++ {
 			disc((i*7919)%w, (i*104729)%(h*6/10), 2, color.White)
 		}
+	case Wall:
+		fill(img.Bounds(), color.RGBA{236, 232, 224, 255})
 	default:
 		panic("unknown scene " + scene)
 	}
@@ -74,6 +78,8 @@ type Options struct {
 	UpsideDown bool
 	// MetaRotateCCW tags the file with a display rotation (what phones do).
 	MetaRotateCCW int
+	// Texture adds film grain so the clip has the edge detail real footage has.
+	Texture bool
 }
 
 // WriteClip renders a scene to an mp4 at path.
@@ -107,8 +113,15 @@ func WriteClip(path, scene string, o Options) error {
 		args = append(args, "-f", "lavfi", "-i", "sine=f=440")
 	}
 	args = append(args, "-t", fmt.Sprint(o.Seconds))
+	var vf []string
 	if o.UpsideDown {
-		args = append(args, "-vf", "hflip,vflip")
+		vf = append(vf, "hflip", "vflip")
+	}
+	if o.Texture {
+		vf = append(vf, "noise=alls=40:allf=t")
+	}
+	if len(vf) > 0 {
+		args = append(args, "-vf", strings.Join(vf, ","))
 	}
 	args = append(args, "-c:v", "libx264", "-pix_fmt", "yuv420p")
 	if o.Sound {

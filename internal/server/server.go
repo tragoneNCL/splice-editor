@@ -29,7 +29,6 @@ import (
 	"filmeditor/internal/llm"
 	"filmeditor/internal/orient"
 	"filmeditor/internal/pipeline"
-	"filmeditor/internal/plan"
 	"filmeditor/internal/project"
 	"filmeditor/internal/revise"
 	"filmeditor/internal/schema"
@@ -654,7 +653,6 @@ func (s *Server) runJob(j *job, p params, ai llm.Asker, aiLabel string) {
 		// One failure disables the AI for the rest of this job so it falls
 		// straight back to the automatic edit instead of re-waiting per step.
 		guarded = llm.NewBreaker(ai)
-		opts.Planners = []plan.Planner{plan.LLM{AI: guarded, Label: aiLabel}}
 		opts.Vision = orient.Vision{AI: guarded}
 		opts.StyleAI = guarded
 	}

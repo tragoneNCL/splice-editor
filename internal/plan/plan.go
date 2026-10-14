@@ -43,7 +43,9 @@ func Check(edl schema.EDL, in Input) error {
 	var available float64
 	for _, c := range in.Clips {
 		durations[c.Path] = c.Duration
-		available += c.Duration
+		for _, s := range c.Shots { // only usable footage counts toward what's available
+			available += s.Length()
+		}
 	}
 	var total float64
 	for i, c := range edl.Cuts {
@@ -73,6 +75,7 @@ func Run(ctx context.Context, in Input, planners ...Planner) (schema.EDL, string
 		for attempt := 1; attempt <= attemptsPerPlanner; attempt++ {
 			edl, err := p.Plan(ctx, in, feedback)
 			if err == nil {
+				edl = Repair(edl, in.Clips)
 				err = Check(edl, in)
 			}
 			if err == nil {
@@ -86,78 +89,14 @@ func Run(ctx context.Context, in Input, planners ...Planner) (schema.EDL, string
 	return schema.EDL{}, "", fmt.Errorf("no planner produced a valid edit (is there any footage?)")
 }
 
-// RuleBased needs no AI: open on the best shot, then keep the strongest
-// shots in chronological order until the target length is reached.
+// RuleBased is the director with no AI labels: it still removes dead footage,
+// de-duplicates, orders by capture, paces and transitions sensibly.
 type RuleBased struct{}
 
 func (RuleBased) Name() string { return "rule-based" }
 
-type candidate struct {
-	clip  string
-	shot  understand.Shot
-	order int
-}
-
-func (RuleBased) Plan(_ context.Context, in Input, _ string) (schema.EDL, error) {
-	piece := in.Recipe.AvgShotLength
-	if piece <= 0 {
-		piece = 2.5
-	}
-
-	// A long shot is split into several pieces so one good shot can fill
-	// more than a single beat of the edit.
-	var cands []candidate
-	for ci, c := range in.Clips {
-		for _, s := range c.Shots {
-			n := int(s.Length() / piece)
-			if n < 1 {
-				n = 1
-			}
-			length := minF(s.Length(), piece)
-			slack := s.Length() - float64(n)*length
-			for k := 0; k < n; k++ {
-				start := s.Start + slack/2 + float64(k)*length
-				cands = append(cands, candidate{
-					clip:  c.Path,
-					shot:  understand.Shot{Start: start, End: start + length, Score: s.Score},
-					order: ci*100000 + int(start*100),
-				})
-			}
-		}
-	}
-	if len(cands) == 0 {
-		return schema.EDL{}, fmt.Errorf("no shots to edit")
-	}
-	sort.SliceStable(cands, func(i, j int) bool { return cands[i].shot.Score > cands[j].shot.Score })
-
-	var chosen []candidate
-	var total float64
-	for _, c := range cands {
-		if total >= in.Recipe.TargetDuration {
-			break
-		}
-		chosen = append(chosen, c)
-		total += c.shot.Length()
-	}
-
-	hook, rest := chosen[0], chosen[1:]
-	sort.SliceStable(rest, func(i, j int) bool { return rest[i].order < rest[j].order })
-	ordered := append([]candidate{hook}, rest...)
-
-	var edl schema.EDL
-	var used float64
-	for _, c := range ordered {
-		length := c.shot.Length()
-		if over := used + length - in.Recipe.TargetDuration; over > 0 {
-			length -= over
-		}
-		if length < 0.3 {
-			continue
-		}
-		edl.Cuts = append(edl.Cuts, schema.Cut{Clip: c.clip, Start: round2(c.shot.Start), End: round2(c.shot.Start + length)})
-		used += length
-	}
-	return edl, nil
+func (RuleBased) Plan(ctx context.Context, in Input, fb string) (schema.EDL, error) {
+	return Director{}.Plan(ctx, in, fb)
 }
 
 func minF(a, b float64) float64 {

@@ -1,0 +1,59 @@
+{
+  "cuts": [
+    {
+      "clip": "samples/property-1/raw/07_pool.mp4",
+      "start": 0,
+      "end": 5
+    },
+    {
+      "clip": "samples/property-1/raw/03_kitchen.mp4",
+      "start": 3.01,
+      "end": 8.01,
+      "transition": "dissolve",
+      "transition_dur": 0.4
+    },
+    {
+      "clip": "samples/property-1/raw/04_kitchen.mp4",
+      "start": 0,
+      "end": 4.74,
+      "transition": "dissolve",
+      "transition_dur": 0.4
+    },
+    {
+      "clip": "samples/property-1/raw/02_other.mp4",
+      "start": 0,
+      "end": 4.97,
+      "transition": "dissolve",
+      "transition_dur": 0.4
+    },
+    {
+      "clip": "samples/property-1/raw/01_hallway.mp4",
+      "start": 0,
+      "end": 4,
+      "transition": "dissolve",
+      "transition_dur": 0.4
+    },
+    {
+      "clip": "samples/property-1/raw/05_entry.mp4",
+      "start": 1,
+      "end": 5.01,
+      "transition": "dissolve",
+      "transition_dur": 0.4
+    },
+    {
+      "clip": "samples/property-1/raw/06_hallway.mp4",
+      "start": 0,
+      "end": 2.97,
+      "transition": "dissolve",
+      "transition_dur": 0.4
+    }
+  ],
+  "fixes": {
+    "samples/property-1/raw/02_other.mp4": 270,
+    "samples/property-1/raw/03_kitchen.mp4": 90,
+    "samples/property-1/raw/04_kitchen.mp4": 90,
+    "samples/property-1/raw/07_pool.mp4": 90
+  },
+  "fade_in": 0.5,
+  "fade_out": 0.5
+}
